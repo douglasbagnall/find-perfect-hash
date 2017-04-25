@@ -1,0 +1,25 @@
+#!/usr/bin/python
+import sys, os
+from collections import Counter
+
+def main():
+    words = []
+    for line in open(sys.argv[1]):
+        w = line.strip()
+        words.append(w.lower())
+
+    hashes = {}
+    for w in words:
+        c = Counter(w)
+        h = ''
+        for k, v in sorted(c.items()):
+            if v & 1:
+                h += k
+        hashes.setdefault(h, []).append(w)
+
+    for k, v in hashes.items():
+        if len(v) > 1:
+            print k, v
+
+
+main()

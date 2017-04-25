@@ -1,0 +1,70 @@
+#!/usr/bin/python
+
+# What is the probability of a perfect hash consisting of k
+# independently hashing bits?
+#
+# Each function is a [pseudo]random function mapping of strings onto
+# a single bit. That is, each string maps to 1 or 0.
+#
+# A useful function will almost certainly produce ones and zeros in
+# equal proportions.
+#
+# The probability of a k-bit hash being perfect for a set of n strings
+# is (2^k)! / (2^k-n)! / (2^k)^n
+#
+# (because the first one has 2^k available perfect values, the second
+# one has 2^k - 1, etc, giving (2^k)! / (2^k - n)!, but the available
+# hash values are always 2^k, giving 2^k^n. in other words, if q = 2^k:
+#
+# q/q * (q-1)/q * (q-2)/q *...(q-n+1)/q  =  q!/(q-n)! / q^n
+#
+# (hypothesis:) the probability of a set of k 1-bit hashes that
+# combine to make a perfect k-bit hash being found in a population of
+# m candidates is roughly the number of k-combinations multiplied by
+# the probability that any of them is perfect. Something like:
+#
+# m! / (k! * (m-k)!)  *  (2^k)! / (2^k-n)! / (2^k)**n
+#
+# k-combinations here means of the m candidates, k are selected, and
+# has the value of the binomial coefficient of (m,k)
+
+from math import *
+import sys
+    
+def fact_n_over_fact_m(n, m):
+    x = 1
+    while m < n:
+        m += 1                
+        x *= m
+    return x
+
+def prob_of_perfection(n, m, k):
+    # n strings, m 1-bit hash candidates, k bits selected
+    q = 2 ** k
+    
+    if n > q:
+        print 'more strings than bits allow'
+        return 0.0
+    
+    bit_combos = fact_n_over_fact_m(m, k)
+    bit_combos /= fact_n_over_fact_m(m - k, 1)
+
+    n_perfect = fact_n_over_fact_m(q, q - n)
+    n_hashes = q ** n
+
+    print n, m, k
+    print 'combos ', bit_combos
+    print 'perfect', n_perfect
+    print 'hashes ', n_hashes
+
+    p = exp(log(bit_combos) + log(n_perfect) - log(n_hashes))
+
+    print p
+    print int(1.0/p)
+    return p
+    
+def main():
+    n, m, k = [int(x) for x in sys.argv[1:]]
+    prob_of_perfection(n, m, k)
+
+main()
