@@ -423,7 +423,7 @@ int cmp_multi_rot(const void *va, const void *vb)
 	if (c != 0) {
 		return c;
 	}
-	return memcmp(a->params, b->params, HASH_COMPONENTS);
+	return memcmp(a->params, b->params, HASH_COMPONENTS * sizeof(uint32_t));
 }
 
 
