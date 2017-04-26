@@ -31,7 +31,7 @@ struct hashcontext {
 };
 
 struct multi_rot {
-	uint32_t params[HASH_COMPONENTS];
+	uint64_t params[HASH_COMPONENTS];
 	uint collisions;
 };
 
@@ -70,40 +70,41 @@ struct hashdata *new_hashdata(struct strings *strings)
 }
 
 
-#define MR_ROT(x) ((x) >> 27)
-#define MR_HASH(x) (((x) >> 26) & 1)
-#define MR_MUL(x) ((x) & 0x3ffffff)
+#define MR_ROT(x) ((x) >> 58ULL)
+#define MR_HASH(x) (((x) >> 57ULL) & 1)
+#define MR_MUL(x) ((x) & ((1ULL << 57ULL) - 1ULL))
 
-static inline uint32_t hash_component(uint32_t param, uint32_t raw[2])
+static inline uint32_t hash_component(uint64_t param, uint32_t raw[2])
 {
-	uint32_t comp = raw[MR_HASH(param)];
-	uint32_t rot = MR_ROT(param);
-	uint32_t mul = MR_MUL(param);
+	uint64_t comp = raw[MR_HASH(param)];
+	uint64_t rot = MR_ROT(param);
+	uint64_t mul = MR_MUL(param);
 	comp *= mul;
 	comp = ROTATE(comp, rot);
 	//comp >>= rot;
-	return comp;
+	return (uint32_t)comp;
 }
 
-int cmp_uint32(const void *a, const void *b)
+
+int cmp_uint64(const void *a, const void *b)
 {
-	return *(uint32_t *)a - *(uint32_t *)b;
+	return *(uint64_t *)a - *(uint64_t *)b;
 }
 
 static void describe_hash(struct hashcontext *ctx,
 			  struct multi_rot *c)
 {
 	int i;
-	uint32_t prev = 0;
+	uint64_t prev = 0;
 	int bright = (c->collisions < 80) ? 1 : 0;
-	qsort(c->params, HASH_COMPONENTS, sizeof(uint32_t), cmp_uint32);
+	qsort(c->params, HASH_COMPONENTS, sizeof(uint64_t), cmp_uint64);
 	if (c->collisions == 0) {
 		printf("\033[01;31m");
 	};
 	printf("collisions %-3u ", c->collisions);
 	printf("\033[00mbits: ");
 	for (i = 0; i < HASH_COMPONENTS; i++) {
-		uint32_t x = c->params[i];
+		uint64_t x = c->params[i];
 		if (i) {
 			printf("\033[01;34m ^ ");
 		}
@@ -113,7 +114,7 @@ static void describe_hash(struct hashcontext *ctx,
 			printf("\033[0%d;%dm", bright, 36 + (i & 1));
 		}
 		printf("%s ", MR_HASH(x) ? "fnv": "djb");
-		printf("↻%-2x ×%07x ", MR_ROT(x), MR_MUL(x));
+		printf("↻%-2lx ×%07llx ", MR_ROT(x), MR_MUL(x));
 		prev = x;
 	}
 	printf("\033[00m\n");
@@ -129,8 +130,7 @@ static uint32_t test_one_subset(struct hashcontext *ctx,
 		uint32_t hash = 0;
 		uint32_t *raw_hash = ctx->data[j].raw_hash;
 		for (i = 0; i < HASH_COMPONENTS; i++) {
-			uint32_t x = c->params[i];
-			uint32_t comp = hash_component(x, raw_hash);
+			uint32_t comp = hash_component(c->params[i], raw_hash);
 			hash ^= comp;
 		}
 		hash &= hash_mask;
@@ -143,19 +143,19 @@ static uint32_t test_one_subset(struct hashcontext *ctx,
 	return collisions;
 }
 
-static void shuffle_uint32(struct rng *rng, uint32_t *array, uint n)
+static void shuffle_uint64(struct rng *rng, uint64_t *array, uint n)
 {
 	uint i, a;
 	for (i = 0; i < n - 1; i++) {
 		a = rand_range(rng, i, n - 1);
-		uint32_t tmp = array[i];
+		uint64_t tmp = array[i];
 		array[i] = array[a];
 		array[a] = tmp;
 	}
 }
 
 
-static int count_sorted_differences(uint32_t *a, uint32_t *b, uint n)
+static int count_sorted_differences(uint64_t *a, uint64_t *b, uint n)
 {
 	/* we assume the lists are both sorted */
 	int count = n;
@@ -211,8 +211,8 @@ static uint32_t test_subset_with_dropout(struct hashcontext *ctx,
 	uint32_t hash_mask = (1 << ctx->bits) - 1;
 	struct rng *rng = ctx->rng;
 
-	uint32_t original[HASH_COMPONENTS];
-	uint32_t pool[size];
+	uint64_t original[HASH_COMPONENTS];
+	uint64_t pool[size];
 	memcpy(pool, c->params, sizeof(c->params));
 	memcpy(original, c->params, sizeof(c->params));
 
@@ -220,14 +220,13 @@ static uint32_t test_subset_with_dropout(struct hashcontext *ctx,
 		pool[j] = rand64(rng);
 	}
 
-	shuffle_uint32(rng, pool, size);
+	shuffle_uint64(rng, pool, size);
 
 	for (j = 0; j < ctx->n; j++) {
 		hash = 0;
 		uint32_t *raw_hash = ctx->data[j].raw_hash;
 		for (i = 0; i < size; i++) {
-			uint32_t x = pool[i];
-			uint32_t comp = hash_component(x, raw_hash);
+			uint32_t comp = hash_component(pool[i], raw_hash);
 			hash ^= comp;
 			components[j * size + i] = comp;
 		}
@@ -287,7 +286,7 @@ static uint32_t test_subset_with_dropout(struct hashcontext *ctx,
 		j++;
 	}
 
-	qsort(c->params, HASH_COMPONENTS, sizeof(uint32_t), cmp_uint32);
+	qsort(c->params, HASH_COMPONENTS, sizeof(uint64_t), cmp_uint64);
 	n_changes = count_sorted_differences(original, c->params, HASH_COMPONENTS);
 
 	c->collisions = test_one_subset(ctx, c);
@@ -312,7 +311,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 	for (i = 0; i < HASH_COMPONENTS; i++) {
 		c->params[i] = rand64(rng);
 	}
-	qsort(c->params, HASH_COMPONENTS, sizeof(uint32_t), cmp_uint32);
+	qsort(c->params, HASH_COMPONENTS, sizeof(uint64_t), cmp_uint64);
 	c->collisions = test_one_subset(ctx, c);
 }
 
@@ -423,7 +422,7 @@ int cmp_multi_rot(const void *va, const void *vb)
 	if (c != 0) {
 		return c;
 	}
-	return memcmp(a->params, b->params, HASH_COMPONENTS * sizeof(uint32_t));
+	return memcmp(a->params, b->params, HASH_COMPONENTS * sizeof(uint64_t));
 }
 
 
@@ -470,7 +469,7 @@ static void breed_one_round(struct hashcontext *ctx,
 			}
 			r >>= 1;
 		}
-		qsort(c->params, HASH_COMPONENTS, sizeof(uint32_t), cmp_uint32);
+		qsort(c->params, HASH_COMPONENTS, sizeof(uint64_t), cmp_uint64);
 		c->collisions = test_one_subset(ctx, c);
 	}
 	printf("killed %u; bred from %u\n", N_CANDIDATES - n_breeders,
