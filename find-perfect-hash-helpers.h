@@ -6,6 +6,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <math.h>
+#include <limits.h>
 
 #ifndef MAX
 #define MAX(a, b)  (((a) >= (b)) ? (a) : (b))

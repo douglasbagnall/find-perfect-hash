@@ -23,16 +23,16 @@ struct stats {
 
 struct hashcontext {
 	struct hashdata *data;
-	uint32_t n;
+	uint n;
 	uint64_t *hits;
 	struct stats stats;
-	uint32_t bits;
+	uint bits;
 	struct rng *rng;
 };
 
 struct multi_rot {
 	uint32_t params[HASH_COMPONENTS];
-	uint32_t collisions;
+	uint collisions;
 };
 
 const char *HASH_NAMES[2] = {"djb", "fnv"};
@@ -123,7 +123,7 @@ static uint32_t test_one_subset(struct hashcontext *ctx,
 				struct multi_rot *c)
 {
 	int i, j;
-	uint32_t collisions = 0;
+	uint collisions = 0;
 	uint32_t hash_mask = (1 << ctx->bits) - 1;
 	for (j = 0; j < ctx->n; j++) {
 		uint32_t hash = 0;
@@ -199,7 +199,7 @@ static uint32_t test_subset_with_dropout(struct hashcontext *ctx,
 					 uint dropout, uint temp)
 {
 	int i, j;
-	uint32_t collisions, best_collisions;
+	uint collisions, best_collisions;
 	const uint size = HASH_COMPONENTS + dropout;
 	uint32_t *hashes = calloc(ctx->n, sizeof(uint32_t));
 	uint32_t *components = calloc(ctx->n, sizeof(uint32_t) * size);
@@ -321,14 +321,14 @@ static void init_multi_rot(struct hashcontext *ctx,
 static void summarise_all(struct multi_rot *pop)
 {
 	uint32_t c;
-	uint32_t min_collisions = 1 << 30;
-	uint32_t max_collisions = 0;
-	uint32_t sum = 0;
-	uint32_t sum2 = 0;
-	uint32_t mean, variance, stddev;
-	uint32_t range_top;
-	uint32_t range, bucket_max, step;
-	uint32_t *counts;
+	uint min_collisions = UINT_MAX;
+	uint max_collisions = 0;
+	uint sum = 0;
+	uint sum2 = 0;
+	uint mean, variance, stddev;
+	uint range_top;
+	uint range, bucket_max, step;
+	uint *counts;
 	int n_buckets;
 	int i, j;
 	for (i = 0; i < N_CANDIDATES; i++) {
@@ -371,7 +371,7 @@ static void summarise_all(struct multi_rot *pop)
 		if (counts[i] == 0) {
 			printf("\033[00;37m");
 		}
-		uint32_t centre = min_collisions + i * step + step / 2;
+		uint centre = min_collisions + i * step + step / 2;
 		if (i == n_buckets - 1 && range_top != max_collisions) {
 			printf("%3u+ %5u \033[00;33m", centre, counts[i]);
 		} else {
@@ -394,11 +394,11 @@ static void summarise_all(struct multi_rot *pop)
 
 static int anneal_one_round(struct hashcontext *ctx,
 			    struct multi_rot *pop,
-			    uint32_t temp)
+			    uint temp)
 {
 	int i;
 	int n_changes = 0;
-	uint32_t old_collisions;
+	uint old_collisions;
 	for (i = 0; i < N_CANDIDATES; i++) {
 		struct multi_rot *c = &pop[i];
 		old_collisions = c->collisions;
@@ -431,7 +431,7 @@ static void breed_one_round(struct hashcontext *ctx,
 			    struct multi_rot *pop)
 {
 	int i, j;
-	uint32_t n_breeders = 0;
+	uint n_breeders = 0;
 	struct rng *rng = ctx->rng;
 	struct multi_rot *a, *b, *c;
 
@@ -516,7 +516,7 @@ static void describe_best(struct hashcontext *ctx,
 static void search_hash_space(struct hashcontext *ctx, struct multi_rot *pop)
 {
 	int i, j;
-	uint32_t temp = TEMPERATURE;
+	uint temp = TEMPERATURE;
 	const int anneals = ANNEAL_ROUNDS;
 	int n_changes;
 
@@ -576,12 +576,12 @@ static void search_hash_space(struct hashcontext *ctx, struct multi_rot *pop)
 }
 
 
-static int find_hash(const char *filename, uint32_t bits, struct rng *rng)
+static int find_hash(const char *filename, uint bits, struct rng *rng)
 {
 	int i;
 	struct strings strings = load_strings(filename);
 	struct hashdata *data = new_hashdata(&strings);
-	uint32_t size = bits + ANNEAL_CANDIDATES;
+	uint size = bits + ANNEAL_CANDIDATES;
 
 	uint64_t *hits = calloc((1 << size) / 64, sizeof(uint64_t));
 
@@ -611,7 +611,7 @@ int main(int argc, char *argv[])
 	printf("got %s %s %s\n",
 	       argv[0], argv[1], argv[2]);
 
-	uint32_t bits = strtoul(argv[2], NULL, 10);
+	uint bits = strtoul(argv[2], NULL, 10);
 	if (bits > 28) {
 		printf("A %u bit hash is too big for me! try 28 or less.\n",
 		       bits);
