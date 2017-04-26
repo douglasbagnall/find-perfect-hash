@@ -1,0 +1,5 @@
+*.pgm
+*.pbm
+*~
+*.o
+/find-perfect-hash
