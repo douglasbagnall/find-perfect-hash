@@ -11,7 +11,7 @@
 struct hashdata {
 	const char *string;
 	unsigned int stringlen;
-	uint32_t raw_hash[2];
+	uint64_t raw_hash;
 };
 
 struct stats {
@@ -44,6 +44,7 @@ static void init_hash(struct hashdata *hash, const char *string)
 {
 	uint32_t h = 5381;
 	uint32_t h2 = 2166136261;
+	uint32_t *raw32 = (uint32_t *)&hash->raw_hash;
 	const char *s;
 	for (s = string; *s != '\0'; s++) {
 		uint8_t c = (uint8_t)*s & 0x5f;
@@ -53,8 +54,9 @@ static void init_hash(struct hashdata *hash, const char *string)
 	}
 	hash->string = string;
 	hash->stringlen = s - string;
-	hash->raw_hash[0] = h;
-	hash->raw_hash[1] = h2;
+
+	raw32[0] = h2;
+	raw32[1] = h;
 }
 
 struct hashdata *new_hashdata(struct strings *strings)
@@ -71,18 +73,19 @@ struct hashdata *new_hashdata(struct strings *strings)
 
 
 #define MR_ROT(x) ((x) >> 58ULL)
-#define MR_HASH(x) (((x) >> 57ULL) & 1)
-#define MR_MUL(x) ((x) & ((1ULL << 57ULL) - 1ULL))
+#define MR_SHIFT(x) (((x) >> 52ULL) & 63)
+#define MR_MUL(x) ((x) & ((1ULL << 52ULL) - 1ULL))
 
-static inline uint32_t hash_component(uint64_t param, uint32_t raw[2])
+
+static inline uint32_t hash_component(uint64_t param, uint64_t x)
 {
-	uint64_t comp = raw[MR_HASH(param)];
 	uint64_t rot = MR_ROT(param);
 	uint64_t mul = MR_MUL(param);
-	comp *= mul;
-	comp = ROTATE(comp, rot);
-	//comp >>= rot;
-	return (uint32_t)comp;
+	uint64_t shift = MR_SHIFT(param);
+	x = ROTATE(x, rot);
+	x *= mul;
+	x >>= shift;
+	return (uint32_t)x;
 }
 
 
@@ -113,8 +116,8 @@ static void describe_hash(struct hashcontext *ctx,
 		} else {
 			printf("\033[0%d;%dm", bright, 36 + (i & 1));
 		}
-		printf("%s ", MR_HASH(x) ? "fnv": "djb");
-		printf("↻%-2lx ×%07llx ", MR_ROT(x), MR_MUL(x));
+		printf("↻%-2lu ×%013llx »%-2lu ", MR_ROT(x), MR_MUL(x),
+		       MR_SHIFT(x));
 		prev = x;
 	}
 	printf("\033[00m\n");
@@ -128,7 +131,7 @@ static uint32_t test_one_subset(struct hashcontext *ctx,
 	uint32_t hash_mask = (1 << ctx->bits) - 1;
 	for (j = 0; j < ctx->n; j++) {
 		uint32_t hash = 0;
-		uint32_t *raw_hash = ctx->data[j].raw_hash;
+		uint64_t raw_hash = ctx->data[j].raw_hash;
 		for (i = 0; i < HASH_COMPONENTS; i++) {
 			uint32_t comp = hash_component(c->params[i], raw_hash);
 			hash ^= comp;
@@ -224,7 +227,7 @@ static uint32_t test_subset_with_dropout(struct hashcontext *ctx,
 
 	for (j = 0; j < ctx->n; j++) {
 		hash = 0;
-		uint32_t *raw_hash = ctx->data[j].raw_hash;
+		uint64_t raw_hash = ctx->data[j].raw_hash;
 		for (i = 0; i < size; i++) {
 			uint32_t comp = hash_component(pool[i], raw_hash);
 			hash ^= comp;
@@ -289,12 +292,8 @@ static uint32_t test_subset_with_dropout(struct hashcontext *ctx,
 	qsort(c->params, HASH_COMPONENTS, sizeof(uint64_t), cmp_uint64);
 	n_changes = count_sorted_differences(original, c->params, HASH_COMPONENTS);
 
-	c->collisions = test_one_subset(ctx, c);
-	if (c->collisions != best_collisions)  {
-		printf("best collisions %u, test_one_subset %u\n",
-		       best_collisions, c->collisions);
-	}
-	
+	c->collisions = best_collisions;
+
 	free(hashes);
 	free(components);
 	ctx->stats.ignored_best_masks += ignored_best_masks;
@@ -401,7 +400,8 @@ static int anneal_one_round(struct hashcontext *ctx,
 	for (i = 0; i < N_CANDIDATES; i++) {
 		struct multi_rot *c = &pop[i];
 		old_collisions = c->collisions;
-		n_changes += test_subset_with_dropout(ctx, c, ANNEAL_CANDIDATES, temp);
+		n_changes += test_subset_with_dropout(ctx, c, ANNEAL_CANDIDATES,
+						      temp);
 		if (c->collisions > old_collisions) {
 			printf("%d: new collisions %u  old collisions %u\n",
 			       i, c->collisions, old_collisions);
