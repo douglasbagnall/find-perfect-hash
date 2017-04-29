@@ -23,13 +23,13 @@ look for evenly spread n-3, n-2, n-1.
  */
 
 
-#define BITS_PER_PARAM 2
+#define BITS_PER_PARAM 1
 #define DETERMINISTIC 0
-#define HASH_COMPONENTS 8
 #define ANNEAL_CANDIDATES 3
 #define TEMPERATURE 0
 #define ANNEAL_ROUNDS 300
-#define N_CANDIDATES 2000
+#define INIT_PARAM_CANDIDATES 30000
+#define N_CANDIDATES 5
 
 #include "find-perfect-hash-helpers.h"
 
@@ -103,6 +103,7 @@ struct hashdata *new_hashdata(struct strings *strings)
 #define MR_SHIFT(x) (((x) >> 52ULL) & 63)
 #define MR_MUL(x) ((x) & ((1ULL << 52ULL) - 1ULL))
 
+#define MR_MASK(i) (((1 << BITS_PER_PARAM) - 1) << (i * BITS_PER_PARAM))
 
 static inline uint32_t hash_component(uint64_t *params, uint i, uint64_t x)
 {
@@ -110,7 +111,7 @@ static inline uint32_t hash_component(uint64_t *params, uint i, uint64_t x)
 	uint64_t rot = MR_ROT(param);
 	uint64_t mul = MR_MUL(param);
 	uint64_t shift = MR_SHIFT(param);
-	uint32_t mask = 3 << (i * 2);
+	uint32_t mask = MR_MASK(i);
 	x = ROTATE(x, rot);
 	x *= mul;
 	x >>= shift;
@@ -146,7 +147,7 @@ static void describe_hash(struct hashcontext *ctx,
 		}
 		printf("↻%-2lu ×%013llx »%-2lu ", MR_ROT(x), MR_MUL(x),
 		       MR_SHIFT(x));
-		printf("& %04x ", 3 << (i * 2));
+		printf("& %04x ", MR_MASK(i));
 		prev = x;
 	}
 	printf("\033[00m\n");
@@ -199,7 +200,7 @@ static uint32_t test_subset_with_alternates(struct hashcontext *ctx,
 	for (j = 0; j < N_PARAMS; j++) {
 		if ((rand64(rng) & 3) == 0) {
 			i = rand_range(rng, 0, N_PARAMS - 2);
-			if (i == j) {
+			if (i >= j) {
 				i++;
 			}
 			pool[j] = original[i];
@@ -307,7 +308,7 @@ static uint test_one_subset_with_limit(struct hashcontext *ctx,
 		if (h) {
 			collisions ++;
 			if (h >= limit) {
-				collisions = ctx->n;
+				collisions = ctx->n + 1;
 				/*
 				printf("hash %x has %d collisions after "
 				       "%d rounds\n", hash, h, j);
@@ -317,6 +318,9 @@ static uint test_one_subset_with_limit(struct hashcontext *ctx,
 		}
 		hits[hash] = h + 1;
 	}
+	/* XXX also return squared collisions -- L2 size, so
+	   more evenly spread ones win. ?*/
+
 	memset(ctx->hits, 0, (1 << ctx->bits));
 	return collisions;
 }
@@ -328,13 +332,23 @@ static void init_multi_rot(struct hashcontext *ctx,
 {
 	int i, j;
 	uint collisions, best_collisions = 0;
+#if 1
+	uint64_t pool[INIT_PARAM_CANDIDATES];
+	for (i = 0; i < INIT_PARAM_CANDIDATES; i++) {
+		pool[i] = rand64(ctx->rng);
+	}
+#endif
 	for (i = 0; i < N_PARAMS; i++) {
 		uint64_t best_param = 0;
-		best_collisions = ctx->n;
+		best_collisions = ctx->n + 2;
 		uint8_t limit = 1 << ((N_PARAMS - i - 1) * BITS_PER_PARAM);
 		//printf("n_params %d limit %hhu\n", i, limit);
-		for (j = 0; j < 300; j++) {
+		for (j = 0; j < INIT_PARAM_CANDIDATES; j++) {
+#if 1
+			params[i] = pool[j];
+#else
 			params[i] = rand64(ctx->rng);
+#endif
 			if (limit && limit < 9 && i < N_PARAMS - 1) {
 				collisions = test_one_subset_with_limit(ctx,
 									params,
@@ -351,6 +365,10 @@ static void init_multi_rot(struct hashcontext *ctx,
 				best_collisions = collisions;
 				best_param = params[i];
 			}
+		}
+		if (best_collisions >= ctx->n) {
+			printf("couldn't find non-overcrowded bucket "
+			       "i %i limit %hhu\n", i, limit);
 		}
 		params[i] = best_param;
 	}
@@ -513,7 +531,7 @@ static void breed_one_round(struct hashcontext *ctx,
 			r >>= 1;
 		}
 		c->collisions = test_one_subset(ctx, c->params,
-						HASH_COMPONENTS);
+						N_PARAMS);
 	}
 	printf("killed %u; bred from %u\n", N_CANDIDATES - n_breeders,
 	       n_breeders);
@@ -565,7 +583,7 @@ static void search_hash_space(struct hashcontext *ctx, struct multi_rot *pop)
 	printf("initial state \n");
 	summarise_all(ctx, pop);
 	describe_best(ctx, pop, false);
-
+	exit(0);
 	for (i = 0; i < 1000; i++) {
 		uint total_changes = 0;
 		ctx->stats.inbreds = 0;
@@ -632,6 +650,9 @@ static int find_hash(const char *filename, uint bits, struct rng *rng)
 	struct multi_rot *pop = calloc(N_CANDIDATES, sizeof(struct multi_rot));
 	for (i = 0; i < N_CANDIDATES; i++) {
 		init_multi_rot(&ctx, &pop[i], mem + i * N_PARAMS);
+		if (i % 100 == 0) {
+			printf("initialised %d/%d\n", i, N_CANDIDATES);
+		}
 	}
 
 	search_hash_space(&ctx, pop);
