@@ -1,5 +1,27 @@
 //gcc -Wall -O3 find-perfect-hash.c -o find-perfect-hash -ggdb -ffast-math -lm -march=native
 
+/*
+n 1-bit hashes
+calculate pair-wise collisions
+(xor pairs of 1 bit hashes) -> 1548 bit vectors 1 means distinction is made
+not xor -> 1 means no distinction is made
+
+if no distinction is made by any pair, there is a collision
+i.e. AND together the 13 * 12 bit vectors
+
+no.
+
+---
+after say n-2 bits (== 11), some of the strings are already unique.
+
+The problem is reduced to a set of smaller problems that can be
+dealt with in 2 bits if fewer than 3 collide.
+
+look for evenly spread n-3, n-2, n-1.
+
+
+ */
+
 
 #define BITS_PER_PARAM 2
 #define DETERMINISTIC 0
