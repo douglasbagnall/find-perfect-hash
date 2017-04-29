@@ -286,6 +286,41 @@ static uint32_t test_subset_with_alternates(struct hashcontext *ctx,
 	return n_changes;
 }
 
+static uint test_one_subset_with_limit(struct hashcontext *ctx,
+				       uint64_t *params, uint n,
+				       uint8_t limit)
+{
+	int i, j;
+	uint collisions = 0;
+	uint32_t hash_mask = (1 << ctx->bits) - 1;
+	uint8_t *hits = (uint8_t *) ctx->hits;
+	for (j = 0; j < ctx->n; j++) {
+		uint32_t hash = 0;
+		uint64_t raw_hash = ctx->data[j].raw_hash;
+		for (i = 0; i < n; i++) {
+			uint32_t comp = hash_component(params, i,
+						       raw_hash);
+			hash ^= comp;
+		}
+		hash &= hash_mask;
+		uint8_t h = hits[hash];
+		if (h) {
+			collisions ++;
+			if (h >= limit) {
+				collisions = ctx->n;
+				/*
+				printf("hash %x has %d collisions after "
+				       "%d rounds\n", hash, h, j);
+				*/
+				break;
+			}
+		}
+		hits[hash] = h + 1;
+	}
+	memset(ctx->hits, 0, (1 << ctx->bits));
+	return collisions;
+}
+
 
 static void init_multi_rot(struct hashcontext *ctx,
 			   struct multi_rot *c,
@@ -296,9 +331,22 @@ static void init_multi_rot(struct hashcontext *ctx,
 	for (i = 0; i < N_PARAMS; i++) {
 		uint64_t best_param = 0;
 		best_collisions = ctx->n;
+		uint8_t limit = 1 << ((N_PARAMS - i - 1) * BITS_PER_PARAM);
+		//printf("n_params %d limit %hhu\n", i, limit);
 		for (j = 0; j < 300; j++) {
 			params[i] = rand64(ctx->rng);
-			collisions = test_one_subset(ctx, params, i + 1);
+			if (limit && limit < 9 && i < N_PARAMS - 1) {
+				collisions = test_one_subset_with_limit(ctx,
+									params,
+									i + 1,
+									limit);
+				/*if (collisions != ctx->n) {
+					printf("collisions %d\n", collisions);
+					}*/
+			} else {
+				collisions = test_one_subset(ctx, params,
+							     i + 1);
+			}
 			if (collisions < best_collisions) {
 				best_collisions = collisions;
 				best_param = params[i];
@@ -571,7 +619,8 @@ static int find_hash(const char *filename, uint bits, struct rng *rng)
 	struct hashdata *data = new_hashdata(&strings);
 	uint size = bits + ANNEAL_CANDIDATES;
 
-	uint64_t *hits = calloc((1 << size) / 64, sizeof(uint64_t));
+	/* sometimes hits is used as bits, needing only 1/8 the size */
+	uint64_t *hits = calloc((1 << size), 1);
 
 	struct hashcontext ctx = {data, strings.n_strings, hits};
 
