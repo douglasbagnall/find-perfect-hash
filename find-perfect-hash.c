@@ -287,9 +287,9 @@ static uint32_t test_subset_with_alternates(struct hashcontext *ctx,
 	return n_changes;
 }
 
-static uint test_one_subset_with_limit(struct hashcontext *ctx,
-				       uint64_t *params, uint n,
-				       uint8_t limit)
+static uint test_one_subset_with_l2(struct hashcontext *ctx,
+				    uint64_t *params, uint n,
+				    uint *collisions2)
 {
 	int i, j;
 	uint collisions = 0;
@@ -306,22 +306,17 @@ static uint test_one_subset_with_limit(struct hashcontext *ctx,
 		hash &= hash_mask;
 		uint8_t h = hits[hash];
 		if (h) {
-			collisions ++;
-			if (h >= limit) {
-				collisions = ctx->n + 1;
-				/*
-				printf("hash %x has %d collisions after "
-				       "%d rounds\n", hash, h, j);
-				*/
-				break;
-			}
+			collisions++;
 		}
-		hits[hash] = h + 1;
+		hits[hash] = MIN(h + 1, 255);
 	}
-	/* XXX also return squared collisions -- L2 size, so
-	   more evenly spread ones win. ?*/
 
-	memset(ctx->hits, 0, (1 << ctx->bits));
+	*collisions2 = 0;
+	for (i = 0; i <= hash_mask; i++) {
+		*collisions2 += hits[i] * hits[i];
+	}
+
+	memset(ctx->hits, 0, 1 << ctx->bits);
 	return collisions;
 }
 
@@ -332,43 +327,44 @@ static void init_multi_rot(struct hashcontext *ctx,
 {
 	int i, j;
 	uint collisions, best_collisions = 0;
-#if 1
+	uint collisions2, best_collisions2 = 0;
+
 	uint64_t pool[INIT_PARAM_CANDIDATES];
 	for (i = 0; i < INIT_PARAM_CANDIDATES; i++) {
 		pool[i] = rand64(ctx->rng);
 	}
-#endif
+
 	for (i = 0; i < N_PARAMS; i++) {
 		uint64_t best_param = 0;
+		bool seek_balance = (i * BITS_PER_PARAM + 8 > ctx->bits &&
+				     i < N_PARAMS - 1);
 		best_collisions = ctx->n + 2;
-		uint8_t limit = 1 << ((N_PARAMS - i - 1) * BITS_PER_PARAM);
-		//printf("n_params %d limit %hhu\n", i, limit);
+		best_collisions2 = UINT_MAX;
 		for (j = 0; j < INIT_PARAM_CANDIDATES; j++) {
-#if 1
 			params[i] = pool[j];
-#else
-			params[i] = rand64(ctx->rng);
-#endif
-			if (limit && limit < 9 && i < N_PARAMS - 1) {
-				collisions = test_one_subset_with_limit(ctx,
-									params,
-									i + 1,
-									limit);
-				/*if (collisions != ctx->n) {
-					printf("collisions %d\n", collisions);
-					}*/
+
+			if (seek_balance) {
+				collisions = test_one_subset_with_l2(ctx,
+								     params,
+								     i + 1,
+								     &collisions2);
+				if (collisions2 < best_collisions2) {
+					printf("collisions2 %u collisions %u\n",
+					       collisions2, collisions);
+					best_collisions2 = collisions2;
+					best_collisions = collisions;
+					best_param = params[i];
+				}
 			} else {
-				collisions = test_one_subset(ctx, params,
+				collisions = test_one_subset(ctx,
+							     params,
 							     i + 1);
+
+				if (collisions < best_collisions) {
+					best_collisions = collisions;
+					best_param = params[i];
+				}
 			}
-			if (collisions < best_collisions) {
-				best_collisions = collisions;
-				best_param = params[i];
-			}
-		}
-		if (best_collisions >= ctx->n) {
-			printf("couldn't find non-overcrowded bucket "
-			       "i %i limit %hhu\n", i, limit);
 		}
 		params[i] = best_param;
 	}
