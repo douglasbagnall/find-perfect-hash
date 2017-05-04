@@ -29,7 +29,8 @@ look for evenly spread n-3, n-2, n-1.
 #define TEMPERATURE 0
 #define ANNEAL_ROUNDS 300
 #define INIT_PARAM_CANDIDATES 30000
-#define N_CANDIDATES 5
+#define UPDATE_PARAM_CANDIDATES 30000
+#define N_CANDIDATES 2
 
 #include "find-perfect-hash-helpers.h"
 
@@ -178,123 +179,15 @@ static uint test_one_subset(struct hashcontext *ctx,
 }
 
 
-static uint32_t test_subset_with_alternates(struct hashcontext *ctx,
-					    struct multi_rot *c, uint temp)
-{
-	int i, j;
-	uint collisions, best_collisions;
-	uint32_t *hashes = calloc(ctx->n, sizeof(uint32_t));
-	uint32_t *components = calloc(ctx->n, (sizeof(uint32_t) *
-					       N_PARAMS));
-	uint64_t *hits = ctx->hits;
-	uint best_masks[1 << N_PARAMS];
-	uint n_best_masks = 0;
-	uint mask, mask_change, prev_mask;
-	uint32_t hash;
-	uint32_t hash_mask = (1 << ctx->bits) - 1;
-	struct rng *rng = ctx->rng;
-	uint64_t original[N_PARAMS];
-	uint64_t pool[N_PARAMS];
-	memcpy(original, c->params, (N_PARAMS *
-				     sizeof(c->params[0])));
-	for (j = 0; j < N_PARAMS; j++) {
-		if ((rand64(rng) & 3) == 0) {
-			i = rand_range(rng, 0, N_PARAMS - 2);
-			if (i >= j) {
-				i++;
-			}
-			pool[j] = original[i];
-		} else {
-			pool[j] = rand64(rng);
-		}
-	}
-
-	for (j = 0; j < ctx->n; j++) {
-		hash = 0;
-		uint64_t raw_hash = ctx->data[j].raw_hash;
-		for (i = 0; i < N_PARAMS; i++) {
-			uint32_t comp = hash_component(original, i,
-						       raw_hash);
-			uint32_t alt = hash_component(pool, i,
-						      raw_hash);
-			hash ^= comp;
-			components[j * N_PARAMS + i] = comp ^ alt;
-		}
-		hashes[j] = hash;
-	}
-
-	best_collisions = ctx->n;
-	prev_mask = 0;
-	for (mask = 0; mask < (1 << N_PARAMS); mask++) {
-		collisions = 0;
-		for (j = 0; j < ctx->n; j++) {
-			uint32_t *hcomp = components + j * N_PARAMS;
-			uint32_t truncated_hash;
-			hash = hashes[j];
-			mask_change = mask ^ prev_mask;
-			i = 0;
-			while (mask_change) {
-				if (mask_change & 1) {
-					hash ^= hcomp[i];
-				}
-				mask_change >>= 1;
-				i++;
-			}
-			truncated_hash = hash & hash_mask;
-			uint64_t f = truncated_hash >> 6;
-			uint64_t g = 1UL << (truncated_hash & 63);
-			collisions += (hits[f] & g) ? 1 : 0;
-			hits[f] |= g;
-			hashes[j] = hash;
-		}
-		if (collisions < best_collisions) {
-			best_collisions = collisions;
-			best_masks[0] = mask;
-			n_best_masks = 1;
-		} else if (collisions == best_collisions) {
-			best_masks[n_best_masks] = mask;
-			n_best_masks++;
-		}
-		/*printf("mask %x winning %x best_collisions %d "
-		       "collisions %d, hash_mask %d n_best %d\n",
-		       mask, best_masks[0], best_collisions,
-		       collisions, hash_mask,
-		       n_best_masks);
-		*/
-		memset(hits, 0, (hash_mask + 1) / 8);
-		prev_mask = mask;
-	}
-
-	j = 0;
-	uint r = rand_range(rng, 0, n_best_masks - 1);
-	uint32_t winning_mask = best_masks[r];
-	uint n_changes = 0;
-	while (winning_mask) {
-		if (winning_mask & 1) {
-			c->params[j] = pool[j];
-			n_changes++;
-		}
-		//printf("winning mask %x n_changes %d j %d\n",
-		//       winning_mask, n_changes, j);
-		winning_mask >>= 1;
-		j++;
-	}
-
-	c->collisions = best_collisions;
-	free(hashes);
-	free(components);
-	ctx->stats.ignored_best_masks += n_best_masks - 1;
-	return n_changes;
-}
 
 static uint test_one_subset_with_l2(struct hashcontext *ctx,
 				    uint64_t *params, uint n,
-				    uint *collisions2)
+				    uint64_t *collisions2)
 {
 	int i, j;
 	uint collisions = 0;
 	uint32_t hash_mask = (1 << ctx->bits) - 1;
-	uint8_t *hits = (uint8_t *) ctx->hits;
+	uint16_t *hits = (uint16_t *) ctx->hits;
 	for (j = 0; j < ctx->n; j++) {
 		uint32_t hash = 0;
 		uint64_t raw_hash = ctx->data[j].raw_hash;
@@ -304,20 +197,114 @@ static uint test_one_subset_with_l2(struct hashcontext *ctx,
 			hash ^= comp;
 		}
 		hash &= hash_mask;
-		uint8_t h = hits[hash];
+		uint16_t h = hits[hash];
 		if (h) {
 			collisions++;
 		}
 		hits[hash] = MIN(h + 1, 255);
 	}
 
-	*collisions2 = 0;
+	uint64_t c2 = 0;
+
 	for (i = 0; i <= hash_mask; i++) {
-		*collisions2 += hits[i] * hits[i];
+		c2 += hits[i] * hits[i];
+	}
+	*collisions2 = c2;
+	memset(hits, 0, (1 << ctx->bits) * sizeof(hits[0]));
+	return collisions;
+}
+
+
+
+static uint32_t test_subset_with_alternates(struct hashcontext *ctx,
+					    struct multi_rot *c, uint temp)
+{
+	int i, j;
+	uint collisions, best_collisions;
+	uint64_t best_param;
+	uint64_t collisions2;
+	uint64_t best_collisions2;
+	uint n_changes;
+	struct rng *rng = ctx->rng;
+	const uint N_VICTIMS = 4;
+	uint victims[N_VICTIMS];
+	uint64_t pool[UPDATE_PARAM_CANDIDATES];
+	uint64_t original[N_PARAMS];
+	uint64_t *params = c->params;
+	uint v;
+
+	memcpy(original, params, N_PARAMS * sizeof(c->params[0]));
+
+	memcpy(pool, params, (N_PARAMS * sizeof(c->params[0])));
+
+	for (i = N_PARAMS; i < UPDATE_PARAM_CANDIDATES; i++) {
+		pool[i] = rand64(ctx->rng);
 	}
 
-	memset(ctx->hits, 0, 1 << ctx->bits);
-	return collisions;
+	for (i = 0; i < N_VICTIMS;) {
+		v = rand_range(rng, 0, N_PARAMS - 1);
+		//printf("i %i, trying %i\n", i, v);
+		bool ok = true;
+		for (j = 0; j < i; j++) {
+			if (v == victims[j]) {
+				ok = false;
+				break;
+			}
+		}
+		if (ok) {
+			params[v] = 0;
+			victims[i] = v;
+			i++;
+		}
+	}
+	//for (i = 0; i < N_VICTIMS; i++) {
+	//	printf("victim %i: %i\n", i, victims[i]);
+	//}
+
+	for (i = 0; i < N_VICTIMS - 1; i++) {
+		uint v = victims[i];
+		best_param = 0;
+		best_collisions = ctx->n + 2;
+		best_collisions2 = UINT64_MAX;
+
+		for (j = 0; j < UPDATE_PARAM_CANDIDATES; j++) {
+			params[v] = pool[j];
+			collisions = test_one_subset_with_l2(ctx,
+							     params,
+							     N_PARAMS,
+							     &collisions2);
+			if (collisions2 < best_collisions2) {
+				best_collisions2 = collisions2;
+				best_collisions = collisions;
+				best_param = params[v];
+			}
+		}
+		params[v] = best_param;
+	}
+
+	v = victims[N_VICTIMS - 1];
+
+	for (j = 0; j < UPDATE_PARAM_CANDIDATES; j++) {
+		params[v] = pool[j];
+		collisions = test_one_subset(ctx,
+					     params,
+					     N_PARAMS);
+		if (collisions < best_collisions) {
+			best_collisions = collisions;
+			best_param = params[v];
+		}
+	}
+	params[v] = best_param;
+	c->collisions = best_collisions;
+
+	n_changes = 0;
+	for (i = 0; i < N_PARAMS; i++) {
+		if (original[i] != params[i]) {
+			n_changes ++;
+		}
+	}
+
+	return n_changes;
 }
 
 
@@ -326,48 +313,74 @@ static void init_multi_rot(struct hashcontext *ctx,
 			   uint64_t *params)
 {
 	int i, j;
-	uint collisions, best_collisions = 0;
-	uint collisions2, best_collisions2 = 0;
+	uint collisions, best_collisions;
+	uint64_t collisions2, best_collisions2 = 0;
+	uint64_t best_param = 0;
 
 	uint64_t pool[INIT_PARAM_CANDIDATES];
 	for (i = 0; i < INIT_PARAM_CANDIDATES; i++) {
 		pool[i] = rand64(ctx->rng);
 	}
 
-	for (i = 0; i < N_PARAMS; i++) {
-		uint64_t best_param = 0;
-		bool seek_balance = (i * BITS_PER_PARAM + 8 > ctx->bits &&
-				     i < N_PARAMS - 1);
+	best_collisions = ctx->n + 2;
+	best_collisions2 = UINT64_MAX;
+
+	const int base_n = MIN(6, N_PARAMS * 2 / 3);
+
+	for (j = 0; j < INIT_PARAM_CANDIDATES; j++) {
+		for (i = 0; i < base_n; i++) {
+			params[i] = pool[j];
+		}
+		collisions = test_one_subset_with_l2(ctx,
+						     params,
+						     base_n,
+						     &collisions2);
+		if (collisions2 < best_collisions2) {
+			best_collisions2 = collisions2;
+			best_collisions = collisions;
+			best_param = pool[j];
+		}
+	}
+	for (i = 0; i < base_n; i++) {
+		params[i] = best_param;
+	}
+	printf("base collisions %u, squared %lu, ratio %.3f\n",
+	       best_collisions, best_collisions2,
+	       best_collisions2 * (1 << base_n) * 1.0 / (ctx->n * ctx->n));
+
+	for (i = base_n; i < N_PARAMS - 1; i++) {
+		best_param = 0;
 		best_collisions = ctx->n + 2;
-		best_collisions2 = UINT_MAX;
+		best_collisions2 = UINT64_MAX;
 		for (j = 0; j < INIT_PARAM_CANDIDATES; j++) {
 			params[i] = pool[j];
 
-			if (seek_balance) {
-				collisions = test_one_subset_with_l2(ctx,
-								     params,
-								     i + 1,
-								     &collisions2);
-				if (collisions2 < best_collisions2) {
-					printf("collisions2 %u collisions %u\n",
-					       collisions2, collisions);
-					best_collisions2 = collisions2;
-					best_collisions = collisions;
-					best_param = params[i];
-				}
-			} else {
-				collisions = test_one_subset(ctx,
+			collisions = test_one_subset_with_l2(ctx,
 							     params,
-							     i + 1);
-
-				if (collisions < best_collisions) {
-					best_collisions = collisions;
-					best_param = params[i];
-				}
+							     i + 1,
+							     &collisions2);
+			if (collisions2 < best_collisions2) {
+				best_collisions2 = collisions2;
+				best_collisions = collisions;
+				best_param = params[i];
 			}
 		}
 		params[i] = best_param;
 	}
+
+	best_param = 0;
+
+	for (j = 0; j < INIT_PARAM_CANDIDATES; j++) {
+		params[N_PARAMS - 1] = pool[j];
+		collisions = test_one_subset(ctx,
+					     params,
+					     N_PARAMS);
+		if (collisions < best_collisions) {
+			best_collisions = collisions;
+			best_param = pool[j];
+		}
+	}
+
 	c->params = params;
 	c->collisions = best_collisions;
 }
@@ -579,8 +592,8 @@ static void search_hash_space(struct hashcontext *ctx, struct multi_rot *pop)
 	printf("initial state \n");
 	summarise_all(ctx, pop);
 	describe_best(ctx, pop, false);
-	exit(0);
-	for (i = 0; i < 1000; i++) {
+	//exit(0);
+	for (i = 0; i < 2; i++) {
 		uint total_changes = 0;
 		ctx->stats.inbreds = 0;
 		ctx->stats.worsenings = 0;
@@ -633,8 +646,8 @@ static int find_hash(const char *filename, uint bits, struct rng *rng)
 	struct hashdata *data = new_hashdata(&strings);
 	uint size = bits + ANNEAL_CANDIDATES;
 
-	/* sometimes hits is used as bits, needing only 1/8 the size */
-	uint64_t *hits = calloc((1 << size), 1);
+	/* sometimes hits is used as bits, needing only 1/16 the size */
+	uint64_t *hits = calloc((1 << size), 2);
 
 	struct hashcontext ctx = {data, strings.n_strings, hits};
 
