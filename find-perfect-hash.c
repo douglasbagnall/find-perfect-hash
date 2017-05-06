@@ -25,12 +25,7 @@ look for evenly spread n-3, n-2, n-1.
 
 #define BITS_PER_PARAM 1
 #define DETERMINISTIC 0
-#define ANNEAL_CANDIDATES 3
-#define TEMPERATURE 0
-#define ANNEAL_BREED_CYCLES 0
-#define ANNEAL_ROUNDS 3
-#define INIT_PARAM_CANDIDATES 1000000000
-#define UPDATE_PARAM_CANDIDATES 30000
+#define INIT_PARAM_CANDIDATES 100000
 #define N_CANDIDATES 1
 
 #include "find-perfect-hash-helpers.h"
@@ -102,9 +97,7 @@ struct hashdata *new_hashdata(struct strings *strings)
 
 
 #define MR_ROT(x) ((x) >> 58ULL)
-#define MR_SHIFT(x) (((x) >> 52ULL) & 63)
-#define MR_MUL(x) ((x) & ((1ULL << 52ULL) - 1ULL))
-
+#define MR_MUL(x) ((x) & ((1ULL << 58ULL) - 1ULL))
 #define MR_MASK(i) (((1 << BITS_PER_PARAM) - 1) << (i * BITS_PER_PARAM))
 
 static inline uint32_t hash_component(uint64_t *params, uint i, uint64_t x)
@@ -112,11 +105,9 @@ static inline uint32_t hash_component(uint64_t *params, uint i, uint64_t x)
 	uint64_t param = params[i];
 	uint64_t rot = MR_ROT(param);
 	uint64_t mul = MR_MUL(param);
-	uint64_t shift = MR_SHIFT(param);
 	uint32_t mask = MR_MASK(i);
-	x = ROTATE(x, rot);
 	x *= mul;
-	x >>= shift;
+	x = ROTATE(x, rot);
 	return x & mask;
 }
 
@@ -147,8 +138,7 @@ static void describe_hash(struct hashcontext *ctx,
 		} else {
 			printf("\033[0%d;%dm", bright, 36 + (i & 1));
 		}
-		printf("↻%-2lu ×%013llx »%-2lu ", MR_ROT(x), MR_MUL(x),
-		       MR_SHIFT(x));
+		printf("↻%-2lu ×%013llx ", MR_ROT(x), MR_MUL(x));
 		printf("& %04x ", MR_MASK(i));
 		prev = x;
 	}
@@ -208,107 +198,22 @@ static uint test_one_subset_with_l2(struct hashcontext *ctx,
 	uint64_t c2 = 0;
 
 	for (i = 0; i <= hash_mask; i++) {
-		c2 += hits[i] * hits[i];
+		uint h = hits[i];
+		c2 += h * h;
 	}
 	*collisions2 = c2;
 	memset(hits, 0, (1 << ctx->bits) * sizeof(hits[0]));
 	return collisions;
 }
 
-
-
-static uint32_t test_subset_with_alternates(struct hashcontext *ctx,
-					    struct multi_rot *c, uint temp)
+static uint64_t calc_best_error(struct hashcontext *ctx, uint n_bits)
 {
-	int i, j;
-	uint collisions, best_collisions;
-	uint64_t best_param;
-	uint64_t collisions2;
-	uint64_t best_collisions2;
-	uint n_changes;
-	struct rng *rng = ctx->rng;
-	const uint N_VICTIMS = 1;
-	uint victims[N_VICTIMS];
-	uint64_t values[N_VICTIMS];
-	uint64_t pool[UPDATE_PARAM_CANDIDATES];
-	uint64_t original[N_PARAMS];
-	uint64_t *params = c->params;
-	uint v;
-
-	memcpy(original, params, N_PARAMS * sizeof(c->params[0]));
-	memcpy(pool, params, (N_PARAMS * sizeof(c->params[0])));
-
-	for (i = N_PARAMS; i < UPDATE_PARAM_CANDIDATES; i++) {
-		pool[i] = rand64(ctx->rng);
-	}
-
-	for (i = 0; i < N_VICTIMS;) {
-		v = rand_range(rng, 0, N_PARAMS - 1);
-		bool ok = true;
-		for (j = 0; j < i; j++) {
-			if (v == victims[j]) {
-				ok = false;
-				break;
-			}
-		}
-		if (ok) {
-			values[i] = params[v];
-			params[v] = 0;
-			victims[i] = v;
-			i++;
-		}
-	}
-
-	for (i = 0; i < N_VICTIMS - 1 && false ; i++) {
-		v = victims[i];
-		best_param = 0;
-		best_collisions = ctx->n + 2;
-		best_collisions2 = UINT64_MAX;
-
-		for (j = 0; j < UPDATE_PARAM_CANDIDATES; j++) {
-			params[v] = pool[j];
-			collisions = test_one_subset_with_l2(ctx,
-							     params,
-							     N_PARAMS,
-							     &collisions2);
-			if (collisions2 < best_collisions2) {
-				best_collisions2 = collisions2;
-				best_collisions = collisions;
-				best_param = pool[j];
-			}
-		}
-		params[v] = best_param;
-	}
-
-	for (; i < N_VICTIMS; i++) {
-		v = victims[i];
-		best_param = values[i];
-		best_collisions = c->collisions;
-		for (j = 0; j < UPDATE_PARAM_CANDIDATES; j++) {
-			params[v] = pool[j];
-			collisions = test_one_subset(ctx,
-						     params,
-						     N_PARAMS);
-			if (collisions < best_collisions) {
-				best_collisions = collisions;
-				best_param = pool[j];
-			}
-		}
-		params[v] = best_param;
-	}
-
-	c->collisions = best_collisions;
-
-	n_changes = 0;
-	for (i = 0; i < N_PARAMS; i++) {
-		if (original[i] != params[i]) {
-			n_changes ++;
-		}
-	}
-
-	return n_changes;
+	uint n = 1 << n_bits;
+	uint q = ctx->n / n;
+	uint r = ctx->n % n;
+	uint64_t sum = n * q * q + 2 * q * r + r;
+	return sum;
 }
-
 
 static void init_multi_rot(struct hashcontext *ctx,
 			   struct multi_rot *c,
@@ -318,7 +223,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 	uint collisions, best_collisions;
 	uint64_t collisions2, best_collisions2 = 0;
 	uint64_t best_param = 0;
-
+	uint64_t best_error;
 	uint64_t *pool = calloc(INIT_PARAM_CANDIDATES, sizeof(uint64_t));
 	for (i = 0; i < INIT_PARAM_CANDIDATES; i++) {
 		pool[i] = rand64(ctx->rng);
@@ -329,9 +234,11 @@ static void init_multi_rot(struct hashcontext *ctx,
 
 	const int base_n = MIN(6, N_PARAMS * 2 / 3);
 
+	best_error = calc_best_error(ctx, base_n);
 	for (j = 0; j < INIT_PARAM_CANDIDATES; j++) {
+		uint64_t p = pool[j];
 		for (i = 0; i < base_n; i++) {
-			params[i] = pool[j];
+			params[i] = p;
 		}
 		collisions = test_one_subset_with_l2(ctx,
 						     params,
@@ -340,9 +247,15 @@ static void init_multi_rot(struct hashcontext *ctx,
 		if (collisions2 < best_collisions2) {
 			best_collisions2 = collisions2;
 			best_collisions = collisions;
-			best_param = pool[j];
+			best_param = p;
+			printf("new best candidate at %d: err %lu > %lu diff %lu\n",
+			       j, collisions2, best_error, collisions2 - best_error);
+			if (collisions2 < best_error + (best_error >> 7)) {
+				printf("found good enough candidate after %d\n", j);
+			}
 		}
 	}
+
 	for (i = 0; i < base_n; i++) {
 		params[i] = best_param;
 	}
@@ -365,6 +278,12 @@ static void init_multi_rot(struct hashcontext *ctx,
 				best_collisions2 = collisions2;
 				best_collisions = collisions;
 				best_param = params[i];
+				printf("new best candidate at %d: collisions %u "
+				       "err %lu > %lu diff %lu\n", j, collisions,
+				       collisions2, best_error, collisions2 - best_error);
+				if (collisions2 < best_error + (best_error >> 7)) {
+					printf("found good enough candidate after %d\n", j);
+				}
 			}
 		}
 		params[i] = best_param;
@@ -463,25 +382,6 @@ static void summarise_all(struct hashcontext *ctx,
 	free(counts);
 }
 
-static int anneal_one_round(struct hashcontext *ctx,
-			    struct multi_rot *pop,
-			    uint temp)
-{
-	int i;
-	int n_changes = 0;
-	uint old_collisions;
-	for (i = 0; i < N_CANDIDATES; i++) {
-		struct multi_rot *c = &pop[i];
-		old_collisions = c->collisions;
-		n_changes += test_subset_with_alternates(ctx, c, temp);
-		if (c->collisions > old_collisions) {
-			printf("%d: new collisions %u  old collisions %u\n",
-			       i, c->collisions, old_collisions);
-			ctx->stats.worsenings ++;
-		}
-	}
-	return n_changes;
-}
 
 int cmp_multi_rot(const void *va, const void *vb)
 {
@@ -498,50 +398,6 @@ int cmp_multi_rot(const void *va, const void *vb)
 }
 
 
-static void breed_one_round(struct hashcontext *ctx,
-			    struct multi_rot *pop)
-{
-	int i, j;
-	uint n_breeders = 0;
-	struct rng *rng = ctx->rng;
-	struct multi_rot *a, *b, *c;
-
-	printf("breeding..\n");
-
-	qsort(pop, N_CANDIDATES, sizeof(struct multi_rot), cmp_multi_rot);
-
-	n_breeders = N_CANDIDATES / 2;
-
-	for (i = n_breeders; i < N_CANDIDATES; i++) {
-		c = &pop[i];
-		a = &pop[rand_range(rng, 0, n_breeders - 1)];
-		b = &pop[rand_range(rng, 0, n_breeders - 1)];
-		if (cmp_multi_rot(a, b) == 0) {
-			if (a != b) {
-				ctx->stats.inbreds++;
-			}
-			/* ensure non-identical pairs */
-			b = c;
-		}
-
-		uint64_t r = 0;
-		for (j = 0; j < N_PARAMS; j++) {
-			if (j % 64 == 0) {
-				r = rand64(rng);
-			}
-			if (r & 1) {
-				c->params[j] = a->params[j];
-			} else {
-				c->params[j] = b->params[j];
-			}
-			r >>= 1;
-		}
-		c->collisions = test_one_subset(ctx, c->params,
-						N_PARAMS);
-	}
-	printf("killed %u; bred from %u\n", N_CANDIDATES - n_breeders,
-	       n_breeders);
-}
 
 static void describe_best(struct hashcontext *ctx,
 			  struct multi_rot *pop, bool already_sorted)
@@ -579,77 +435,20 @@ static void describe_best(struct hashcontext *ctx,
 }
 
 
-static void search_hash_space(struct hashcontext *ctx, struct multi_rot *pop)
-{
-	int i, j;
-	uint temp = TEMPERATURE;
-	int n_changes;
-
-	printf("initial state \n");
-	summarise_all(ctx, pop);
-	describe_best(ctx, pop, false);
-	//exit(0);
-	for (i = 0; i < ANNEAL_BREED_CYCLES; i++) {
-		uint total_changes = 0;
-		ctx->stats.inbreds = 0;
-		ctx->stats.worsenings = 0;
-		ctx->stats.skipped = 0;
-		ctx->stats.ignored_best_masks = 0;
-		for (j = 0; j < ANNEAL_ROUNDS; j++) {
-			n_changes = anneal_one_round(ctx, pop, temp);
-			if (n_changes == 0 && j > 10) {
-				printf("anneal round %d had no changes. "
-				       "stopping\n", j);
-				break;
-			}
-			total_changes += n_changes;
-			if (j % 100 == 0) {
-				printf("annealed %d rounds\n", j);
-			}
-		}
-
-		printf("round %d; temp %u\n", i, temp);
-		printf("anneal_changes %u (average %u, last %d)\n",
-		       total_changes, (total_changes + (j / 2)) / j, n_changes);
-		printf("skipped %u (average %u)\n",
-		       ctx->stats.skipped, (ctx->stats.skipped + (j / 2)) / j);
-		printf("ignored best masks %u (average %u)\n",
-		       ctx->stats.ignored_best_masks,
-		       (ctx->stats.ignored_best_masks + (j / 2)) / j);
-		printf("worsenings %u\n", ctx->stats.worsenings / j);
-		printf("inbred %u\n", ctx->stats.inbreds);
-
-		summarise_all(ctx, pop);
-
-		breed_one_round(ctx, pop);
-		describe_best(ctx, pop, false);
-		char s[20];
-		sprintf(s, "multi_rot-%d.pbm", i);
-		pbm_dump(pop, sizeof(pop[0]) * 8, ctx->n,
-			 0, sizeof(pop[0]), s);
-
-		temp = temp * 4 / 5;
-		printf("done round %d\n", i);
-	}
-	printf("finishing\n");
-}
-
-
 static int find_hash(const char *filename, uint bits, struct rng *rng)
 {
 	int i;
 	struct strings strings = load_strings(filename);
 	struct hashdata *data = new_hashdata(&strings);
-	uint size = bits + ANNEAL_CANDIDATES;
+	N_PARAMS = (bits + (BITS_PER_PARAM - 1)) / BITS_PER_PARAM;
+	uint size = N_PARAMS * BITS_PER_PARAM;
 
-	/* sometimes hits is used as bits, needing only 1/16 the size */
 	uint64_t *hits = calloc((1 << size), 2);
 
 	struct hashcontext ctx = {data, strings.n_strings, hits};
 
 	ctx.bits = bits;
 	ctx.rng = rng;
-	N_PARAMS = (bits + (BITS_PER_PARAM - 1)) / BITS_PER_PARAM;
 
 	uint64_t *mem = calloc(N_CANDIDATES * N_PARAMS, sizeof(uint64_t));
 	struct multi_rot *pop = calloc(N_CANDIDATES, sizeof(struct multi_rot));
@@ -660,7 +459,9 @@ static int find_hash(const char *filename, uint bits, struct rng *rng)
 		}
 	}
 
-	search_hash_space(&ctx, pop);
+        summarise_all(&ctx, pop);
+        describe_best(&ctx, pop, false);
+
 	free(hits);
 	free(pop);
 	free(mem);

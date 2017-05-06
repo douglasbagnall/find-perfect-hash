@@ -120,7 +120,7 @@ pgm_dump_double(const double *matrix, uint width, uint height,
 
 
 /*pbm for bitmap */
-static int
+static int __attribute__((unused))
 pbm_dump(const void *void_data,
 	 const int width,
 	 const int height,
