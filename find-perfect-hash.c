@@ -25,7 +25,7 @@ look for evenly spread n-3, n-2, n-1.
 
 #define BITS_PER_PARAM 1
 #define DETERMINISTIC 0
-#define INIT_PARAM_CANDIDATES 100000
+
 
 #include "find-perfect-hash-helpers.h"
 
@@ -83,7 +83,7 @@ static void init_hash(struct hashdata *hash, const char *string)
 	//hash->raw_hash = h;
 }
 
-struct hashdata *new_hashdata(struct strings *strings)
+static struct hashdata *new_hashdata(struct strings *strings)
 {
 	int i;
 	struct hashdata *data = calloc(strings->n_strings,
@@ -110,12 +110,6 @@ static inline uint32_t hash_component(uint64_t *params, uint i, uint64_t x)
 	x = ROTATE(x, rot);
 
 	return x & mask;
-}
-
-
-int cmp_uint64(const void *a, const void *b)
-{
-	return *(uint64_t *)a - *(uint64_t *)b;
 }
 
 static void describe_hash(struct hashcontext *ctx,
@@ -179,7 +173,6 @@ static uint test_params(struct hashcontext *ctx,
 }
 
 
-
 static uint test_params_with_l2(struct hashcontext *ctx,
 				uint64_t *params, uint n,
 				uint64_t *collisions2)
@@ -201,9 +194,9 @@ static uint test_params_with_l2(struct hashcontext *ctx,
 		if (h) {
 			collisions++;
 		}
-		hits[hash] = MIN(h + 1, 255);
+		hits[hash] = h + 1;
 	}
-	
+
 	uint64_t c2 = 0;
 
 	for (i = 0; i <= hash_mask; i++) {
@@ -227,25 +220,26 @@ static uint64_t calc_best_error(struct hashcontext *ctx, uint n_params)
 
 static void init_multi_rot(struct hashcontext *ctx,
 			   struct multi_rot *c,
-			   uint64_t *params)
+			   uint64_t *params,
+			   uint n_candidates)
 {
 	int i, j;
 	uint collisions, best_collisions;
 	uint64_t collisions2, best_collisions2 = 0;
 	uint64_t best_param = 0;
 	uint64_t best_error;
-	uint64_t *pool = calloc(INIT_PARAM_CANDIDATES, sizeof(uint64_t));
-	for (i = 0; i < INIT_PARAM_CANDIDATES; i++) {
+	uint64_t *pool = calloc(n_candidates, sizeof(uint64_t));
+	for (i = 0; i < n_candidates; i++) {
 		pool[i] = rand64(ctx->rng);
 	}
 
 	best_collisions = ctx->n + 2;
 	best_collisions2 = UINT64_MAX;
 
-	const int base_n = MIN(6, N_PARAMS * 2 / 3);
+	const uint base_n = MIN(3, N_PARAMS * 2 / 3);
 
 	best_error = calc_best_error(ctx, base_n);
-	for (j = 0; j < INIT_PARAM_CANDIDATES; j++) {
+	for (j = 0; j < n_candidates; j++) {
 		uint64_t p = pool[j];
 		for (i = 0; i < base_n; i++) {
 			params[i] = p;
@@ -258,9 +252,9 @@ static void init_multi_rot(struct hashcontext *ctx,
 			best_collisions2 = collisions2;
 			best_collisions = collisions;
 			best_param = p;
-			printf("new best candidate at %d: err %lu > %lu diff %lu\n",
+			printf("new best candidate at %d: err %lu best %lu diff %lu\n",
 			       j, collisions2, best_error, collisions2 - best_error);
-			if (collisions2 < best_error + (best_error >> 7)) {
+			if (collisions2 <= best_error + (best_error >> 8)) {
 				printf("found good enough candidate after %d\n", j);
 			}
 		}
@@ -269,16 +263,13 @@ static void init_multi_rot(struct hashcontext *ctx,
 	for (i = 0; i < base_n; i++) {
 		params[i] = best_param;
 	}
-	printf("base collisions %u, squared %lu, ratio %.3f\n",
-	       best_collisions, best_collisions2,
-	       best_collisions2 * (1 << base_n) * 1.0 / (ctx->n * ctx->n));
 
 	for (i = base_n; i < N_PARAMS - 1; i++) {
 		best_error = calc_best_error(ctx, i + 1);
 		best_param = 0;
 		best_collisions = ctx->n + 2;
 		best_collisions2 = UINT64_MAX;
-		for (j = 0; j < INIT_PARAM_CANDIDATES; j++) {
+		for (j = 0; j < n_candidates; j++) {
 			params[i] = pool[j];
 
 			collisions = test_params_with_l2(ctx,
@@ -303,7 +294,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 
 	best_param = 0;
 
-	for (j = 0; j < INIT_PARAM_CANDIDATES; j++) {
+	for (j = 0; j < n_candidates; j++) {
 		params[N_PARAMS - 1] = pool[j];
 		collisions = test_params(ctx,
 					 params,
@@ -325,7 +316,8 @@ static void init_multi_rot(struct hashcontext *ctx,
 }
 
 
-static int find_hash(const char *filename, uint bits, struct rng *rng)
+static int find_hash(const char *filename, uint bits,
+		     uint n_candidates, struct rng *rng)
 {
 	struct strings strings = load_strings(filename);
 	struct hashdata *data = new_hashdata(&strings);
@@ -341,7 +333,7 @@ static int find_hash(const char *filename, uint bits, struct rng *rng)
 
 	uint64_t params[N_PARAMS];
 	struct multi_rot c;
-	init_multi_rot(&ctx, &c, params);
+	init_multi_rot(&ctx, &c, params, n_candidates);
 
 	describe_hash(&ctx, &c);
 
@@ -366,11 +358,15 @@ int main(int argc, char *argv[])
 		       bits);
 		return 2;
 	}
+
+	uint n_candidates = strtoul(argv[3], NULL, 10);
+	printf("Using %u candidates per round \n", n_candidates);
+
 	struct rng rng;
 #if DETERMINISTIC
 	rng_init(&rng, 12345);
 #else
 	rng_random_init(&rng);
 #endif
-	return find_hash(argv[1], bits, &rng);
+	return find_hash(argv[1], bits, n_candidates, &rng);
 }
