@@ -35,18 +35,10 @@ struct hashdata {
 	uint64_t raw_hash;
 };
 
-struct stats {
-	uint worsenings;
-	uint inbreds;
-	uint skipped;
-	uint ignored_best_masks;
-};
-
 struct hashcontext {
 	struct hashdata *data;
 	uint n;
 	uint64_t *hits;
-	struct stats stats;
 	uint bits;
 	struct rng *rng;
 };
