@@ -89,7 +89,8 @@ static struct hashdata *new_hashdata(struct strings *strings)
 
 
 #define MR_ROT(x) ((x) >> 58ULL)
-#define MR_MUL(x) ((x) & ((1ULL << 58ULL) - 1ULL))
+//#define MR_MUL(x) ((x) & ((1ULL << 58ULL) - 1ULL))
+#define MR_MUL(x) (x)
 #define MR_MASK(i) (((1 << BITS_PER_PARAM) - 1) << (i * BITS_PER_PARAM))
 
 static inline uint32_t hash_component(uint64_t *params, uint i, uint64_t x)
@@ -99,16 +100,29 @@ static inline uint32_t hash_component(uint64_t *params, uint i, uint64_t x)
 	uint64_t mul = MR_MUL(param);
 	uint32_t mask = MR_MASK(i);
 	x *= mul;
-	x = ROTATE(x, rot);
+	x >>= rot;
+	//x = ROTATE(x, rot);
 
 	return x & mask;
 }
+
+static inline uint32_t unmasked_hash(uint64_t raw_hash,
+				     uint64_t *params, uint n)
+{
+	uint i;
+	uint32_t hash = 0;
+	for (i = 0; i < n; i++) {
+		uint32_t comp = hash_component(params, i, raw_hash);
+		hash ^= comp;
+	}
+	return hash;
+}
+
 
 static void describe_hash(struct hashcontext *ctx,
 			  struct multi_rot *c)
 {
 	int i, j;
-	int bright = (c->collisions < 80) ? 1 : 0;
 	if (c->collisions == 0) {
 		printf("\033[01;31m");
 	};
@@ -116,26 +130,33 @@ static void describe_hash(struct hashcontext *ctx,
 	printf("\033[00mbits: ");
 	for (i = 0; i < N_PARAMS; i++) {
 		uint64_t x = c->params[i];
-		if (i) {
-			printf("\033[01;34m ^ ");
-		}
-		bool repeat = false;
-		for (j = 0; j < N_PARAMS; j++) {
-			if (i == j) {
-				continue;
-			}
+		uint mask = MR_MASK(i);
+		bool duplicate = false;
+		for (j = 0; j < i; j++) {
 			if (x == c->params[j]) {
-				repeat = true;
+				duplicate = true;
 				break;
 			}
 		}
-		if (repeat) {
+		if (duplicate) {
+			continue;
+		}
+		for (j = i + 1; j < N_PARAMS; j++) {
+			if (x == c->params[j]) {
+				mask |= MR_MASK(j);
+			}
+		}
+		if (i) {
+			printf("\033[01;34m ^ ");
+		}
+
+		if (mask != MR_MASK(i)) {
 			printf("\033[01;33m");
 		} else {
-			printf("\033[0%d;%dm", bright, 36 + (i & 1));
+			printf("\033[01;%dm", 36 + (i & 1));
 		}
-		printf("↻%-2lu ×%013llx ", MR_ROT(x), MR_MUL(x));
-		printf("& %04x ", MR_MASK(i));
+		printf("↻%-2lu ×%013lx & %04x ",
+		       MR_ROT(x), MR_MUL(x), mask);
 	}
 	printf("\033[00m\n");
 }
@@ -143,24 +164,20 @@ static void describe_hash(struct hashcontext *ctx,
 static uint test_params(struct hashcontext *ctx,
 			uint64_t *params, uint n)
 {
-	int i, j;
+	int j;
 	uint collisions = 0;
+	uint64_t *hits = ctx->hits;
 	uint32_t hash_mask = (1 << ctx->bits) - 1;
 	for (j = 0; j < ctx->n; j++) {
-		uint32_t hash = 0;
-		uint64_t raw_hash = ctx->data[j].raw_hash;
-		for (i = 0; i < n; i++) {
-			uint32_t comp = hash_component(params, i,
-						       raw_hash);
-			hash ^= comp;
-		}
+		uint32_t hash = unmasked_hash(ctx->data[j].raw_hash,
+					      params, n);
 		hash &= hash_mask;
 		uint32_t f = hash >> 6;
 		uint64_t g = 1UL << (hash & 63);
-		collisions += (ctx->hits[f] & g) ? 1 : 0;
-		ctx->hits[f] |= g;
+		collisions += (hits[f] & g) ? 1 : 0;
+		hits[f] |= g;
 	}
-	memset(ctx->hits, 0, (1 << ctx->bits) / 8);
+	memset(hits, 0, (1 << ctx->bits) / 8);
 	return collisions;
 }
 
@@ -174,13 +191,8 @@ static uint test_params_with_l2(struct hashcontext *ctx,
 	uint32_t hash_mask = (1 << ctx->bits) - 1;
 	uint16_t *hits = (uint16_t *) ctx->hits;
 	for (j = 0; j < ctx->n; j++) {
-		uint32_t hash = 0;
-		uint64_t raw_hash = ctx->data[j].raw_hash;
-		for (i = 0; i < n; i++) {
-			uint32_t comp = hash_component(params, i,
-						       raw_hash);
-			hash ^= comp;
-		}
+		uint32_t hash = unmasked_hash(ctx->data[j].raw_hash,
+					      params, n);
 		hash &= hash_mask;
 		uint16_t h = hits[hash];
 		if (h) {
@@ -199,6 +211,40 @@ static uint test_params_with_l2(struct hashcontext *ctx,
 	memset(hits, 0, (1 << ctx->bits) * sizeof(hits[0]));
 	return collisions;
 }
+
+
+static void remove_non_colliding_strings(struct hashcontext *ctx,
+					 uint64_t *params, uint n)
+{
+	int j, k;
+	uint32_t hash_mask = (1 << ctx->bits) - 1;
+	uint16_t *hits = (uint16_t *) ctx->hits;
+	/* hash once for the counts */
+	for (j = 0; j < ctx->n; j++) {
+		uint32_t hash = unmasked_hash(ctx->data[j].raw_hash,
+					      params, n);
+		hash &= hash_mask;
+		hits[hash]++;
+	}
+	/* hash again to find the unique ones */
+	k = 0;
+	for (j = 0; j < ctx->n; j++) {
+		uint32_t hash = unmasked_hash(ctx->data[j].raw_hash,
+					      params, n);
+		hash &= hash_mask;
+		if (hits[hash] != 1) {
+			ctx->data[k] = ctx->data[j];
+			k++;
+		}
+	}
+
+	ctx->n = k;
+	printf("%d params dropped %u unique strings, down to %u\n",
+	       n, j - k, k);
+
+	memset(hits, 0, (1 << ctx->bits) * sizeof(hits[0]));
+}
+
 
 static uint64_t calc_best_error(struct hashcontext *ctx, uint n_params)
 {
@@ -220,6 +266,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 	uint64_t collisions2, best_collisions2 = 0;
 	uint64_t best_param = 0;
 	uint64_t best_error;
+	uint64_t original_n_strings = ctx->n;
 	uint64_t *pool = calloc(n_candidates, sizeof(uint64_t));
 	for (i = 0; i < n_candidates; i++) {
 		pool[i] = rand64(ctx->rng);
@@ -228,7 +275,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 	best_collisions = ctx->n + 2;
 	best_collisions2 = UINT64_MAX;
 
-	const uint base_n = MIN(3, N_PARAMS * 2 / 3);
+	const uint base_n = MIN(4, N_PARAMS * 3 / 4);
 
 	best_error = calc_best_error(ctx, base_n);
 	for (j = 0; j < n_candidates; j++) {
@@ -246,8 +293,9 @@ static void init_multi_rot(struct hashcontext *ctx,
 			best_param = p;
 			printf("new best candidate at %d: err %lu best %lu diff %lu\n",
 			       j, collisions2, best_error, collisions2 - best_error);
-			if (collisions2 <= best_error + (best_error >> 8)) {
+			if (best_error - collisions2 == 0) {
 				printf("found good enough candidate after %d\n", j);
+				break;
 			}
 		}
 	}
@@ -282,12 +330,17 @@ static void init_multi_rot(struct hashcontext *ctx,
 			}
 		}
 		params[i] = best_param;
+
+		remove_non_colliding_strings(ctx, params, i + 1);
 	}
 
 	best_param = 0;
-
-	for (j = 0; j < n_candidates; j++) {
-		params[N_PARAMS - 1] = pool[j];
+	/* try extra hard for the last round */
+	uint64_t attempts = n_candidates * original_n_strings / ctx->n;
+	printf("making %lu last round attempts\n", attempts);
+	
+	for (j = 0; j < attempts; j++) {
+		params[N_PARAMS - 1] = rand64(ctx->rng);
 		collisions = test_params(ctx,
 					 params,
 					 N_PARAMS);
