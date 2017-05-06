@@ -26,7 +26,6 @@ look for evenly spread n-3, n-2, n-1.
 #define BITS_PER_PARAM 1
 #define DETERMINISTIC 0
 #define INIT_PARAM_CANDIDATES 100000
-#define N_CANDIDATES 1
 
 #include "find-perfect-hash-helpers.h"
 
@@ -155,8 +154,8 @@ static void describe_hash(struct hashcontext *ctx,
 	printf("\033[00m\n");
 }
 
-static uint test_one_subset(struct hashcontext *ctx,
-			    uint64_t *params, uint n)
+static uint test_params(struct hashcontext *ctx,
+			uint64_t *params, uint n)
 {
 	int i, j;
 	uint collisions = 0;
@@ -181,9 +180,9 @@ static uint test_one_subset(struct hashcontext *ctx,
 
 
 
-static uint test_one_subset_with_l2(struct hashcontext *ctx,
-				    uint64_t *params, uint n,
-				    uint64_t *collisions2)
+static uint test_params_with_l2(struct hashcontext *ctx,
+				uint64_t *params, uint n,
+				uint64_t *collisions2)
 {
 	int i, j;
 	uint collisions = 0;
@@ -204,7 +203,7 @@ static uint test_one_subset_with_l2(struct hashcontext *ctx,
 		}
 		hits[hash] = MIN(h + 1, 255);
 	}
-
+	
 	uint64_t c2 = 0;
 
 	for (i = 0; i <= hash_mask; i++) {
@@ -251,10 +250,10 @@ static void init_multi_rot(struct hashcontext *ctx,
 		for (i = 0; i < base_n; i++) {
 			params[i] = p;
 		}
-		collisions = test_one_subset_with_l2(ctx,
-						     params,
-						     base_n,
-						     &collisions2);
+		collisions = test_params_with_l2(ctx,
+						 params,
+						 base_n,
+						 &collisions2);
 		if (collisions2 < best_collisions2) {
 			best_collisions2 = collisions2;
 			best_collisions = collisions;
@@ -282,10 +281,10 @@ static void init_multi_rot(struct hashcontext *ctx,
 		for (j = 0; j < INIT_PARAM_CANDIDATES; j++) {
 			params[i] = pool[j];
 
-			collisions = test_one_subset_with_l2(ctx,
-							     params,
-							     i + 1,
-							     &collisions2);
+			collisions = test_params_with_l2(ctx,
+							 params,
+							 i + 1,
+							 &collisions2);
 			if (collisions2 < best_collisions2) {
 				best_collisions2 = collisions2;
 				best_collisions = collisions;
@@ -306,9 +305,9 @@ static void init_multi_rot(struct hashcontext *ctx,
 
 	for (j = 0; j < INIT_PARAM_CANDIDATES; j++) {
 		params[N_PARAMS - 1] = pool[j];
-		collisions = test_one_subset(ctx,
-					     params,
-					     N_PARAMS);
+		collisions = test_params(ctx,
+					 params,
+					 N_PARAMS);
 		if (collisions < best_collisions) {
 			best_collisions = collisions;
 			best_param = pool[j];
@@ -326,102 +325,8 @@ static void init_multi_rot(struct hashcontext *ctx,
 }
 
 
-static void summarise_all(struct hashcontext *ctx,
-			  struct multi_rot *pop)
-{
-	uint32_t c;
-	uint min_collisions = UINT_MAX;
-	uint max_collisions = 0;
-	uint sum = 0;
-	uint sum2 = 0;
-	uint mean, variance, stddev;
-	uint range_top;
-	uint range, bucket_max, step;
-	uint *counts;
-	int n_buckets;
-	int i, j;
-	for (i = 0; i < N_CANDIDATES; i++) {
-		c = pop[i].collisions;
-		max_collisions = MAX(c, max_collisions);
-		min_collisions = MIN(c, min_collisions);
-		sum += c;
-		sum2 += c * c;
-	}
-	mean = (sum + N_CANDIDATES / 2) / N_CANDIDATES;
-	variance = ((sum2 - sum * sum  + N_CANDIDATES / 2) /
-		    (N_CANDIDATES * N_CANDIDATES));
-	stddev = sqrtf(variance) + 0.5;
-
-	printf(" mean %u stddev %u\n", mean, stddev);
-
-	range_top = MIN(max_collisions, mean + 4 * stddev);
-	range = range_top - min_collisions;
-
-	step = MAX(range / 40, 1);
-	n_buckets = range / step + 1;
-	counts = calloc(n_buckets + 1, sizeof(counts[0]));
-
-	printf("range_top %u\n", range_top);
-	j = 0;
-	for (i = 0; i < N_CANDIDATES; i++) {
-		c = pop[i].collisions;
-		j = (c - min_collisions) / step;
-		if (j >= n_buckets) {
-			j = n_buckets - 1;
-		}
-		counts[j]++;
-	}
-	bucket_max = 0;
-	for (i = 0; i < n_buckets; i++) {
-		bucket_max = MAX(bucket_max, counts[i]);
-	}
-	printf("buckets size %u\n", step);
-	for (i = 0; i < n_buckets; i++) {
-		if (counts[i] == 0) {
-			printf("\033[00;37m");
-		}
-		uint centre = min_collisions + i * step + step / 2;
-		if (i == n_buckets - 1 && range_top != max_collisions) {
-			printf("%3u+ %5u \033[00;33m", centre, counts[i]);
-		} else {
-			printf("%4u %5u \033[00;33m", centre, counts[i]);
-		}
-		if (bucket_max > 80) {
-			for (j = 0; j < (counts[i] * 80 + 40) / bucket_max; j++) {
-				putchar('*');
-			}
-		} else {
-			for (j = 0; j < counts[i]; j++) {
-				putchar('*');
-			}
-		}
-
-		puts("\033[00m");
-	}
-	free(counts);
-}
-
-
-int cmp_multi_rot(const void *va, const void *vb)
-{
-	struct multi_rot *a = (struct multi_rot *)va;
-	struct multi_rot *b = (struct multi_rot *)vb;
-	if (a == b) {
-		return 0;
-	}
-	int c = (int)a->collisions - (int)b->collisions;
-	if (c != 0) {
-		return c;
-	}
-	return memcmp(a->params, b->params, N_PARAMS * sizeof(uint64_t));
-}
-
-
-
-
 static int find_hash(const char *filename, uint bits, struct rng *rng)
 {
-	int i;
 	struct strings strings = load_strings(filename);
 	struct hashdata *data = new_hashdata(&strings);
 	N_PARAMS = (bits + (BITS_PER_PARAM - 1)) / BITS_PER_PARAM;
@@ -434,21 +339,13 @@ static int find_hash(const char *filename, uint bits, struct rng *rng)
 	ctx.bits = bits;
 	ctx.rng = rng;
 
-	uint64_t *mem = calloc(N_CANDIDATES * N_PARAMS, sizeof(uint64_t));
-	struct multi_rot *pop = calloc(N_CANDIDATES, sizeof(struct multi_rot));
-	for (i = 0; i < N_CANDIDATES; i++) {
-		init_multi_rot(&ctx, &pop[i], mem + i * N_PARAMS);
-		if (i % 100 == 0) {
-			printf("initialised %d/%d\n", i, N_CANDIDATES);
-		}
-	}
+	uint64_t params[N_PARAMS];
+	struct multi_rot c;
+	init_multi_rot(&ctx, &c, params);
 
-        summarise_all(&ctx, pop);
-	describe_hash(&ctx, pop);
+	describe_hash(&ctx, &c);
 
 	free(hits);
-	free(pop);
-	free(mem);
 	return 0;
 }
 
