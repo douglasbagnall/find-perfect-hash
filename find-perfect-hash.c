@@ -27,10 +27,11 @@ look for evenly spread n-3, n-2, n-1.
 #define DETERMINISTIC 0
 #define ANNEAL_CANDIDATES 3
 #define TEMPERATURE 0
-#define ANNEAL_ROUNDS 300
-#define INIT_PARAM_CANDIDATES 30000
+#define ANNEAL_BREED_CYCLES 0
+#define ANNEAL_ROUNDS 3
+#define INIT_PARAM_CANDIDATES 1000000000
 #define UPDATE_PARAM_CANDIDATES 30000
-#define N_CANDIDATES 2
+#define N_CANDIDATES 1
 
 #include "find-perfect-hash-helpers.h"
 
@@ -226,15 +227,15 @@ static uint32_t test_subset_with_alternates(struct hashcontext *ctx,
 	uint64_t best_collisions2;
 	uint n_changes;
 	struct rng *rng = ctx->rng;
-	const uint N_VICTIMS = 4;
+	const uint N_VICTIMS = 1;
 	uint victims[N_VICTIMS];
+	uint64_t values[N_VICTIMS];
 	uint64_t pool[UPDATE_PARAM_CANDIDATES];
 	uint64_t original[N_PARAMS];
 	uint64_t *params = c->params;
 	uint v;
 
 	memcpy(original, params, N_PARAMS * sizeof(c->params[0]));
-
 	memcpy(pool, params, (N_PARAMS * sizeof(c->params[0])));
 
 	for (i = N_PARAMS; i < UPDATE_PARAM_CANDIDATES; i++) {
@@ -243,7 +244,6 @@ static uint32_t test_subset_with_alternates(struct hashcontext *ctx,
 
 	for (i = 0; i < N_VICTIMS;) {
 		v = rand_range(rng, 0, N_PARAMS - 1);
-		//printf("i %i, trying %i\n", i, v);
 		bool ok = true;
 		for (j = 0; j < i; j++) {
 			if (v == victims[j]) {
@@ -252,17 +252,15 @@ static uint32_t test_subset_with_alternates(struct hashcontext *ctx,
 			}
 		}
 		if (ok) {
+			values[i] = params[v];
 			params[v] = 0;
 			victims[i] = v;
 			i++;
 		}
 	}
-	//for (i = 0; i < N_VICTIMS; i++) {
-	//	printf("victim %i: %i\n", i, victims[i]);
-	//}
 
-	for (i = 0; i < N_VICTIMS - 1; i++) {
-		uint v = victims[i];
+	for (i = 0; i < N_VICTIMS - 1 && false ; i++) {
+		v = victims[i];
 		best_param = 0;
 		best_collisions = ctx->n + 2;
 		best_collisions2 = UINT64_MAX;
@@ -276,25 +274,29 @@ static uint32_t test_subset_with_alternates(struct hashcontext *ctx,
 			if (collisions2 < best_collisions2) {
 				best_collisions2 = collisions2;
 				best_collisions = collisions;
-				best_param = params[v];
+				best_param = pool[j];
 			}
 		}
 		params[v] = best_param;
 	}
 
-	v = victims[N_VICTIMS - 1];
-
-	for (j = 0; j < UPDATE_PARAM_CANDIDATES; j++) {
-		params[v] = pool[j];
-		collisions = test_one_subset(ctx,
-					     params,
-					     N_PARAMS);
-		if (collisions < best_collisions) {
-			best_collisions = collisions;
-			best_param = params[v];
+	for (; i < N_VICTIMS; i++) {
+		v = victims[i];
+		best_param = values[i];
+		best_collisions = c->collisions;
+		for (j = 0; j < UPDATE_PARAM_CANDIDATES; j++) {
+			params[v] = pool[j];
+			collisions = test_one_subset(ctx,
+						     params,
+						     N_PARAMS);
+			if (collisions < best_collisions) {
+				best_collisions = collisions;
+				best_param = pool[j];
+			}
 		}
+		params[v] = best_param;
 	}
-	params[v] = best_param;
+
 	c->collisions = best_collisions;
 
 	n_changes = 0;
@@ -317,7 +319,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 	uint64_t collisions2, best_collisions2 = 0;
 	uint64_t best_param = 0;
 
-	uint64_t pool[INIT_PARAM_CANDIDATES];
+	uint64_t *pool = calloc(INIT_PARAM_CANDIDATES, sizeof(uint64_t));
 	for (i = 0; i < INIT_PARAM_CANDIDATES; i++) {
 		pool[i] = rand64(ctx->rng);
 	}
@@ -380,7 +382,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 			best_param = pool[j];
 		}
 	}
-
+	free(pool);
 	c->params = params;
 	c->collisions = best_collisions;
 }
@@ -520,11 +522,6 @@ static void breed_one_round(struct hashcontext *ctx,
 			}
 			/* ensure non-identical pairs */
 			b = c;
-			/* maybe mutate one of the guilty parties */
-			if (rand64(rng) & 1) {
-				printf("back-breeding to increase diversity\n");
-				c = a;
-			}
 		}
 
 		uint64_t r = 0;
@@ -586,20 +583,19 @@ static void search_hash_space(struct hashcontext *ctx, struct multi_rot *pop)
 {
 	int i, j;
 	uint temp = TEMPERATURE;
-	const int anneals = ANNEAL_ROUNDS;
 	int n_changes;
 
 	printf("initial state \n");
 	summarise_all(ctx, pop);
 	describe_best(ctx, pop, false);
 	//exit(0);
-	for (i = 0; i < 2; i++) {
+	for (i = 0; i < ANNEAL_BREED_CYCLES; i++) {
 		uint total_changes = 0;
 		ctx->stats.inbreds = 0;
 		ctx->stats.worsenings = 0;
 		ctx->stats.skipped = 0;
 		ctx->stats.ignored_best_masks = 0;
-		for (j = 0; j < anneals; j++) {
+		for (j = 0; j < ANNEAL_ROUNDS; j++) {
 			n_changes = anneal_one_round(ctx, pop, temp);
 			if (n_changes == 0 && j > 10) {
 				printf("anneal round %d had no changes. "
