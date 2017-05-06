@@ -81,6 +81,7 @@ static void init_hash(struct hashdata *hash, const char *string)
 
 	raw32[0] = h2;
 	raw32[1] = h;
+	//hash->raw_hash = h;
 }
 
 struct hashdata *new_hashdata(struct strings *strings)
@@ -108,6 +109,7 @@ static inline uint32_t hash_component(uint64_t *params, uint i, uint64_t x)
 	uint32_t mask = MR_MASK(i);
 	x *= mul;
 	x = ROTATE(x, rot);
+
 	return x & mask;
 }
 
@@ -120,8 +122,7 @@ int cmp_uint64(const void *a, const void *b)
 static void describe_hash(struct hashcontext *ctx,
 			  struct multi_rot *c)
 {
-	int i;
-	uint64_t prev = 0;
+	int i, j;
 	int bright = (c->collisions < 80) ? 1 : 0;
 	if (c->collisions == 0) {
 		printf("\033[01;31m");
@@ -133,14 +134,23 @@ static void describe_hash(struct hashcontext *ctx,
 		if (i) {
 			printf("\033[01;34m ^ ");
 		}
-		if (x == prev) {
+		bool repeat = false;
+		for (j = 0; j < N_PARAMS; j++) {
+			if (i == j) {
+				continue;
+			}
+			if (x == c->params[j]) {
+				repeat = true;
+				break;
+			}
+		}
+		if (repeat) {
 			printf("\033[01;33m");
 		} else {
 			printf("\033[0%d;%dm", bright, 36 + (i & 1));
 		}
 		printf("↻%-2lu ×%013llx ", MR_ROT(x), MR_MUL(x));
 		printf("& %04x ", MR_MASK(i));
-		prev = x;
 	}
 	printf("\033[00m\n");
 }
@@ -206,8 +216,9 @@ static uint test_one_subset_with_l2(struct hashcontext *ctx,
 	return collisions;
 }
 
-static uint64_t calc_best_error(struct hashcontext *ctx, uint n_bits)
+static uint64_t calc_best_error(struct hashcontext *ctx, uint n_params)
 {
+	uint n_bits = n_params * BITS_PER_PARAM;
 	uint n = 1 << n_bits;
 	uint q = ctx->n / n;
 	uint r = ctx->n % n;
@@ -264,6 +275,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 	       best_collisions2 * (1 << base_n) * 1.0 / (ctx->n * ctx->n));
 
 	for (i = base_n; i < N_PARAMS - 1; i++) {
+		best_error = calc_best_error(ctx, i + 1);
 		best_param = 0;
 		best_collisions = ctx->n + 2;
 		best_collisions2 = UINT64_MAX;
@@ -281,8 +293,9 @@ static void init_multi_rot(struct hashcontext *ctx,
 				printf("new best candidate at %d: collisions %u "
 				       "err %lu > %lu diff %lu\n", j, collisions,
 				       collisions2, best_error, collisions2 - best_error);
-				if (collisions2 < best_error + (best_error >> 7)) {
+				if (collisions2 == best_error) {
 					printf("found good enough candidate after %d\n", j);
+					break;
 				}
 			}
 		}
@@ -299,6 +312,12 @@ static void init_multi_rot(struct hashcontext *ctx,
 		if (collisions < best_collisions) {
 			best_collisions = collisions;
 			best_param = pool[j];
+			printf("new final round best at %d: collisions %u\n",
+			       j, collisions);
+			if (collisions == 0) {
+				printf("found a winner after %d\n", j);
+				break;
+			}
 		}
 	}
 	free(pool);
@@ -399,41 +418,6 @@ int cmp_multi_rot(const void *va, const void *vb)
 
 
 
-static void describe_best(struct hashcontext *ctx,
-			  struct multi_rot *pop, bool already_sorted)
-{
-	int i;
-	int count, cmp;
-	struct multi_rot *c, *d;
-
-	if (! already_sorted) {
-		qsort(pop, N_CANDIDATES, sizeof(struct multi_rot),
-		      cmp_multi_rot);
-	}
-
-	c = pop;
-	count = 1;
-	for (i = 1; i < N_CANDIDATES; i++) {
-		d = &pop[i];
-		cmp = cmp_multi_rot(c, d);
-		if (cmp == 0) {
-			count++;
-			continue;
-		}
-		if (cmp > 0) {
-			printf("list seems unsorted!\n");
-			return;
-		}
-		printf("%3d× ", count);
-		describe_hash(ctx, c);
-		if (c->collisions < d->collisions) {
-			return;
-		}
-		count = 1;
-		c = d;
-	}
-}
-
 
 static int find_hash(const char *filename, uint bits, struct rng *rng)
 {
@@ -460,7 +444,7 @@ static int find_hash(const char *filename, uint bits, struct rng *rng)
 	}
 
         summarise_all(&ctx, pop);
-        describe_best(&ctx, pop, false);
+	describe_hash(&ctx, pop);
 
 	free(hits);
 	free(pop);
