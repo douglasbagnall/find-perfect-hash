@@ -184,29 +184,30 @@ static uint test_params(struct hashcontext *ctx,
 
 static uint test_params_with_l2(struct hashcontext *ctx,
 				uint64_t *params, uint n,
-				uint64_t *collisions2)
+				uint64_t *collisions2,
+				uint64_t best_c2)
 {
-	int i, j;
+	int j;
 	uint collisions = 0;
 	uint32_t hash_mask = (1 << ctx->bits) - 1;
 	uint16_t *hits = (uint16_t *) ctx->hits;
+	uint64_t c2 = 0;
 	for (j = 0; j < ctx->n; j++) {
 		uint32_t hash = unmasked_hash(ctx->data[j].raw_hash,
 					      params, n);
 		hash &= hash_mask;
 		uint16_t h = hits[hash];
+		c2 += h;
 		if (h) {
 			collisions++;
+			if (c2 > best_c2) {
+				break;
+			}
 		}
+
 		hits[hash] = h + 1;
 	}
 
-	uint64_t c2 = 0;
-
-	for (i = 0; i <= hash_mask; i++) {
-		uint h = hits[i];
-		c2 += h * h;
-	}
 	*collisions2 = c2;
 	memset(hits, 0, (1 << ctx->bits) * sizeof(hits[0]));
 	return collisions;
@@ -248,11 +249,24 @@ static void remove_non_colliding_strings(struct hashcontext *ctx,
 
 static uint64_t calc_best_error(struct hashcontext *ctx, uint n_params)
 {
+	/* the calculation is
+	   (x * x - x) / 2     aka
+	   (x * (x - 1)) / 2
+
+	   for each bucket, and there are n - r buckests where x is q
+	   and r buckets where x is q + 1.
+
+	      (x + 1) * (x) - x * (x - 1)
+	   =  x * (x+1 - (x - 1))
+	   =  x * 2
+	   /2
+
+	*/
 	uint n_bits = n_params * BITS_PER_PARAM;
 	uint n = 1 << n_bits;
 	uint q = ctx->n / n;
 	uint r = ctx->n % n;
-	uint64_t sum = n * q * q + 2 * q * r + r;
+	uint64_t sum = (n * (q * q - q)) / 2 + q * r;
 	return sum;
 }
 
@@ -286,7 +300,8 @@ static void init_multi_rot(struct hashcontext *ctx,
 		collisions = test_params_with_l2(ctx,
 						 params,
 						 base_n,
-						 &collisions2);
+						 &collisions2,
+						 best_collisions2);
 		if (collisions2 < best_collisions2) {
 			best_collisions2 = collisions2;
 			best_collisions = collisions;
@@ -315,7 +330,8 @@ static void init_multi_rot(struct hashcontext *ctx,
 			collisions = test_params_with_l2(ctx,
 							 params,
 							 i + 1,
-							 &collisions2);
+							 &collisions2,
+							 best_collisions2);
 			if (collisions2 < best_collisions2) {
 				best_collisions2 = collisions2;
 				best_collisions = collisions;
