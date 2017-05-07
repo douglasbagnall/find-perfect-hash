@@ -50,8 +50,6 @@ struct multi_rot {
 
 uint N_PARAMS = 0;
 
-const char *HASH_NAMES[2] = {"djb", "fnv"};
-
 //#define FNV 1099511628211UL
 #define FNV 16777619
 
@@ -197,14 +195,13 @@ static uint test_params_with_l2(struct hashcontext *ctx,
 					      params, n);
 		hash &= hash_mask;
 		uint16_t h = hits[hash];
-		c2 += h;
+		c2 += 2 * h + 1;
 		if (h) {
 			collisions++;
-			if (c2 > best_c2) {
-				break;
-			}
 		}
-
+		if (c2 > best_c2) {
+			break;
+		}
 		hits[hash] = h + 1;
 	}
 
@@ -249,24 +246,11 @@ static void remove_non_colliding_strings(struct hashcontext *ctx,
 
 static uint64_t calc_best_error(struct hashcontext *ctx, uint n_params)
 {
-	/* the calculation is
-	   (x * x - x) / 2     aka
-	   (x * (x - 1)) / 2
-
-	   for each bucket, and there are n - r buckests where x is q
-	   and r buckets where x is q + 1.
-
-	      (x + 1) * (x) - x * (x - 1)
-	   =  x * (x+1 - (x - 1))
-	   =  x * 2
-	   /2
-
-	*/
 	uint n_bits = n_params * BITS_PER_PARAM;
 	uint n = 1 << n_bits;
 	uint q = ctx->n / n;
 	uint r = ctx->n % n;
-	uint64_t sum = (n * (q * q - q)) / 2 + q * r;
+	uint64_t sum = n * q * q + 2 * q * r + r;
 	return sum;
 }
 
