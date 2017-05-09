@@ -357,7 +357,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 	best_collisions = ctx->n + 2;
 	best_collisions2 = UINT64_MAX;
 
-	const uint base_n = MIN(4, N_PARAMS * 3 / 4);
+	const uint base_n = MIN(4 / BITS_PER_PARAM, N_PARAMS * 3 / 4);
 
 	best_error = calc_best_error(ctx, base_n);
 
