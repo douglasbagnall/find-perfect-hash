@@ -184,6 +184,7 @@ static struct strings load_strings(const char *filename)
 	s.mem = malloc(len + 1);
 	if (s.mem == NULL) {
 		printf("could not allocate %d bytes?!\n", len + 1);
+		fclose(f);
 		return s;
 	}
 	read = fread(s.mem, 1, len, f);
@@ -191,6 +192,7 @@ static struct strings load_strings(const char *filename)
 		printf("gah, C file handling, wanted %d, got %lu\n",
 		       len, read);
 		free(s.mem);
+		fclose(f);
 		return s;
 	}
 	for (i = 0; i < len; i++) {
@@ -209,5 +211,6 @@ static struct strings load_strings(const char *filename)
 			j++;
 		}
 	}
+	fclose(f);
 	return s;
 }
