@@ -21,6 +21,7 @@ struct hashcontext {
 	uint bits;
 	struct rng *rng;
 	uint running_n;
+	char *string_mem;
 };
 
 struct multi_rot {
@@ -452,34 +453,62 @@ static void init_multi_rot(struct hashcontext *ctx,
 }
 
 
-static int find_hash(const char *filename, uint bits,
-		     uint n_candidates, struct rng *rng)
+struct hashcontext *new_context(const char *filename, uint bits,
+				uint n_candidates, struct rng *rng)
 {
 	struct strings strings = load_strings(filename);
 	struct hashdata *data = new_hashdata(&strings);
+	free(strings.strings); /* the (char**), not the (char*) */
+	struct hashcontext *ctx = malloc(sizeof(*ctx));
 
 	N_PARAMS = (bits + (BITS_PER_PARAM - 1)) / BITS_PER_PARAM;
 	uint size = N_PARAMS * BITS_PER_PARAM;
-
+	printf("size %u bits %u\n", size, bits);
 	uint64_t *hits = calloc((1 << size), sizeof(uint16_t));
 
-	struct hashcontext ctx = {data, strings.n_strings, hits};
+	ctx->data = data;
+	ctx->n = strings.n_strings;
+	ctx->hits = hits;
+	ctx->bits = bits;
+	ctx->rng = rng;
+	ctx->running_n = 0;
+	ctx->string_mem = strings.mem;
+	return ctx;
+}
 
-	ctx.bits = bits;
-	ctx.rng = rng;
+static void free_context(struct hashcontext *ctx)
+{
+	free(ctx->hits);
+	free(ctx->data);
+	free(ctx->string_mem);
+	free(ctx);
+	ctx = NULL;
+}
 
-	if (! check_raw_hash(&ctx)) {
+
+static int find_hash(const char *filename, uint bits,
+		     uint n_candidates, struct rng *rng)
+{
+
+	struct hashcontext *ctx = new_context(filename, bits,
+					     n_candidates, rng);
+
+	if (! check_raw_hash(ctx)) {
 		printf("This will never work because the raw hash collides\n");
 		exit(1);
 	}
 
-	uint64_t params[N_PARAMS];
 	struct multi_rot c;
-	init_multi_rot(&ctx, &c, params, n_candidates);
+	c.params = calloc(N_PARAMS, sizeof(uint64_t));
+	init_multi_rot(ctx, &c, n_candidates);
 
-	describe_hash(&ctx, &c);
+	struct hashcontext *ctx2 = new_context(filename, bits,
+					       n_candidates, rng);
 
-	free(hits);
+	describe_hash(ctx2, &c);
+	free(c.params);
+	free_context(ctx);
+	free_context(ctx2);
 	return 0;
 }
 
