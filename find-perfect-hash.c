@@ -124,9 +124,14 @@ static bool check_raw_hash(struct hashcontext *ctx)
 	return false;
 }
 
+#if 0
 #define MR_ROT(x) ((x) & (uint64_t)63)
-//#define MR_MUL(x) ((x) & ((1ULL << 58ULL) - 1ULL))
 #define MR_MUL(x) ((x) >> 6)
+#else
+#define MR_ROT(x) ((x) >> 58UL)
+#define MR_MUL(x) (x)
+#endif
+
 #define MR_MASK(i) (((1 << BITS_PER_PARAM) - 1) << (i * BITS_PER_PARAM))
 
 static inline uint32_t hash_component(uint64_t *params, uint i, uint64_t x)
