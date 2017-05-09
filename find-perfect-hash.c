@@ -2,8 +2,7 @@
 
 
 #define BITS_PER_PARAM 1
-#define DETERMINISTIC 0
-
+#define DETERMINISTIC 01
 
 #include "find-perfect-hash-helpers.h"
 
