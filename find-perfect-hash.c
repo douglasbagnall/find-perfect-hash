@@ -59,7 +59,6 @@ static void init_hash(struct hashdata *hash, const char *string)
 {
 	uint32_t h = 5381;
 	uint32_t h2 = 2166136261;
-	uint32_t *raw32 = (uint32_t *)&hash->raw_hash;
 	const char *s;
 	for (s = string; *s != '\0'; s++) {
 		uint8_t c = (uint8_t)*s & 0x5f;
@@ -70,10 +69,10 @@ static void init_hash(struct hashdata *hash, const char *string)
 	hash->string = string;
 	hash->stringlen = s - string;
 	hash->running_hash = 0;
-
-	raw32[0] = h2;
-	raw32[1] = h;
-	//hash->raw_hash = h;
+	//uint32_t *raw32 = (uint32_t *)&hash->raw_hash;
+	//raw32[0] = h2;
+	//raw32[1] = h;
+	hash->raw_hash = h2;
 }
 
 static struct hashdata *new_hashdata(struct strings *strings)
