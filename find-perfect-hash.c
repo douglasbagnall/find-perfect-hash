@@ -228,29 +228,6 @@ static void describe_hash(struct hashcontext *ctx,
 	printf("\033[00m\n");
 }
 
-static uint test_params(struct hashcontext *ctx,
-			uint64_t *params, uint n,
-			uint best_collisions)
-{
-	int j;
-	uint collisions = 0;
-	uint64_t *hits = ctx->hits;
-	uint32_t hash_mask = (1 << ctx->bits) - 1;
-	for (j = 0; j < ctx->n; j++) {
-		uint32_t hash = unmasked_hash(ctx->data[j].raw_hash,
-					      params, n);
-		hash &= hash_mask;
-		uint32_t f = hash >> 6;
-		uint64_t g = 1UL << (hash & 63);
-		collisions += (hits[f] & g) ? 1 : 0;
-		hits[f] |= g;
-		if (collisions >= best_collisions) {
-			break;
-		}
-	}
-	memset(hits, 0, (1 << ctx->bits) / 8);
-	return collisions;
-}
 
 static uint test_params_running(struct hashcontext *ctx,
 				uint64_t *params, uint n,
