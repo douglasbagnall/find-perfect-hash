@@ -160,7 +160,8 @@ static void describe_hash(struct hashcontext *ctx,
 }
 
 static uint test_params(struct hashcontext *ctx,
-			uint64_t *params, uint n)
+			uint64_t *params, uint n,
+			uint best_collisions)
 {
 	int j;
 	uint collisions = 0;
@@ -174,6 +175,9 @@ static uint test_params(struct hashcontext *ctx,
 		uint64_t g = 1UL << (hash & 63);
 		collisions += (hits[f] & g) ? 1 : 0;
 		hits[f] |= g;
+		if (collisions >= best_collisions) {
+			break;
+		}
 	}
 	memset(hits, 0, (1 << ctx->bits) / 8);
 	return collisions;
@@ -199,7 +203,8 @@ static uint test_params_with_l2(struct hashcontext *ctx,
 		if (h) {
 			collisions++;
 		}
-		if (c2 > best_c2) {
+		if (c2 >= best_c2) {
+			collisions = UINT_MAX;
 			break;
 		}
 		hits[hash] = h + 1;
@@ -343,7 +348,8 @@ static void init_multi_rot(struct hashcontext *ctx,
 		params[N_PARAMS - 1] = rand64(ctx->rng);
 		collisions = test_params(ctx,
 					 params,
-					 N_PARAMS);
+					 N_PARAMS,
+					 best_collisions);
 		if (collisions < best_collisions) {
 			best_collisions = collisions;
 			best_param = pool[j];
