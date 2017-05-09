@@ -33,6 +33,7 @@ struct hashdata {
 	const char *string;
 	unsigned int stringlen;
 	uint64_t raw_hash;
+	uint32_t running_hash;
 };
 
 struct hashcontext {
@@ -41,6 +42,7 @@ struct hashcontext {
 	uint64_t *hits;
 	uint bits;
 	struct rng *rng;
+	uint running_n;
 };
 
 struct multi_rot {
@@ -67,6 +69,7 @@ static void init_hash(struct hashdata *hash, const char *string)
 	}
 	hash->string = string;
 	hash->stringlen = s - string;
+	hash->running_hash = 0;
 
 	raw32[0] = h2;
 	raw32[1] = h;
@@ -85,10 +88,46 @@ static struct hashdata *new_hashdata(struct strings *strings)
 	return data;
 }
 
+static bool check_raw_hash(struct hashcontext *ctx)
+{
+	uint i;
+	uint mask;
+	uint buckets = 256;
+	uint64_t *values;
+	uint index;
+	while (buckets < ctx->n * 2) {
+		buckets *= 2;
+	}
+	mask = buckets - 1;
 
-#define MR_ROT(x) ((x) >> 58ULL)
+	values = calloc(buckets, sizeof(uint64_t));
+
+	for (i = 0; i < ctx->n; i++) {
+		uint64_t h = ctx->data[i].raw_hash;
+		if (h == 0ULL) {
+			printf("'%s' hashes to zero, with which we can't cope\n",
+			       ctx->data[i].string);
+			goto bad;
+		}
+		index = h & mask;
+		while (values[index] != 0) {
+			if (values[index] == h) {
+				goto bad;
+			}
+			index = (index + 1) & mask;
+		}
+		values[index] = h;
+	}
+	free(values);
+	return true;
+  bad:
+	free(values);
+	return false;
+}
+
+#define MR_ROT(x) ((x) & (uint64_t)63)
 //#define MR_MUL(x) ((x) & ((1ULL << 58ULL) - 1ULL))
-#define MR_MUL(x) (x)
+#define MR_MUL(x) ((x) >> 6)
 #define MR_MASK(i) (((1 << BITS_PER_PARAM) - 1) << (i * BITS_PER_PARAM))
 
 static inline uint32_t hash_component(uint64_t *params, uint i, uint64_t x)
@@ -114,6 +153,32 @@ static inline uint32_t unmasked_hash(uint64_t raw_hash,
 		hash ^= comp;
 	}
 	return hash;
+}
+
+static inline uint32_t running_unmasked_hash(uint64_t raw_hash,
+					     uint32_t running_hash,
+					     uint64_t *params, uint n)
+{
+	uint32_t comp = hash_component(params, n - 1, raw_hash);
+	return running_hash ^ comp;
+}
+
+static inline void update_running_hash(struct hashcontext *ctx,
+				       uint64_t *params, uint n)
+{
+	uint i;
+	if (n > 0) {
+		for (i = 0; i < ctx->n; i++) {
+			ctx->data[i].running_hash = unmasked_hash(
+				ctx->data[i].raw_hash,
+				params, n);
+		}
+	} else {
+		for (i = 0; i < ctx->n; i++) {
+			ctx->data[i].running_hash = 0;
+		}
+	}
+	ctx->running_n = n;
 }
 
 
@@ -183,11 +248,37 @@ static uint test_params(struct hashcontext *ctx,
 	return collisions;
 }
 
+static uint test_params_running(struct hashcontext *ctx,
+				uint64_t *params, uint n,
+				uint best_collisions)
+{
+	int j;
+	uint collisions = 0;
+	uint64_t *hits = ctx->hits;
+	uint32_t hash_mask = (1 << ctx->bits) - 1;
+	for (j = 0; j < ctx->n; j++) {
+		uint32_t hash = running_unmasked_hash(ctx->data[j].raw_hash,
+						      ctx->data[j].running_hash,
+						      params, n);
+		hash &= hash_mask;
+		uint32_t f = hash >> 6;
+		uint64_t g = 1UL << (hash & 63);
+		collisions += (hits[f] & g) ? 1 : 0;
+		hits[f] |= g;
+		if (collisions >= best_collisions) {
+			break;
+		}
+	}
+	memset(hits, 0, (1 << ctx->bits) / 8);
+	return collisions;
+}
+
 
 static uint test_params_with_l2(struct hashcontext *ctx,
 				uint64_t *params, uint n,
 				uint64_t *collisions2,
-				uint64_t best_c2)
+				uint64_t best_c2,
+				bool full)
 {
 	int j;
 	uint collisions = 0;
@@ -195,8 +286,15 @@ static uint test_params_with_l2(struct hashcontext *ctx,
 	uint16_t *hits = (uint16_t *) ctx->hits;
 	uint64_t c2 = 0;
 	for (j = 0; j < ctx->n; j++) {
-		uint32_t hash = unmasked_hash(ctx->data[j].raw_hash,
-					      params, n);
+		uint32_t hash;
+		if (full) {
+			hash = unmasked_hash(ctx->data[j].raw_hash,
+					     params, n);
+		} else {
+			hash = running_unmasked_hash(ctx->data[j].raw_hash,
+						      ctx->data[j].running_hash,
+						      params, n);
+		}
 		hash &= hash_mask;
 		uint16_t h = hits[hash];
 		c2 += 2 * h + 1;
@@ -224,16 +322,18 @@ static void remove_non_colliding_strings(struct hashcontext *ctx,
 	uint16_t *hits = (uint16_t *) ctx->hits;
 	/* hash once for the counts */
 	for (j = 0; j < ctx->n; j++) {
-		uint32_t hash = unmasked_hash(ctx->data[j].raw_hash,
-					      params, n);
+		uint32_t hash = running_unmasked_hash(ctx->data[j].raw_hash,
+						      ctx->data[j].running_hash,
+						      params, n);
 		hash &= hash_mask;
 		hits[hash]++;
 	}
 	/* hash again to find the unique ones */
 	k = 0;
 	for (j = 0; j < ctx->n; j++) {
-		uint32_t hash = unmasked_hash(ctx->data[j].raw_hash,
-					      params, n);
+		uint32_t hash = running_unmasked_hash(ctx->data[j].raw_hash,
+						      ctx->data[j].running_hash,
+						      params, n);
 		hash &= hash_mask;
 		if (hits[hash] != 1) {
 			ctx->data[k] = ctx->data[j];
@@ -270,10 +370,8 @@ static void init_multi_rot(struct hashcontext *ctx,
 	uint64_t best_param = 0;
 	uint64_t best_error;
 	uint64_t original_n_strings = ctx->n;
-	uint64_t *pool = calloc(n_candidates, sizeof(uint64_t));
-	for (i = 0; i < n_candidates; i++) {
-		pool[i] = rand64(ctx->rng);
-	}
+
+	update_running_hash(ctx, params, 0);
 
 	best_collisions = ctx->n + 2;
 	best_collisions2 = UINT64_MAX;
@@ -281,8 +379,9 @@ static void init_multi_rot(struct hashcontext *ctx,
 	const uint base_n = MIN(4, N_PARAMS * 3 / 4);
 
 	best_error = calc_best_error(ctx, base_n);
+
 	for (j = 0; j < n_candidates; j++) {
-		uint64_t p = pool[j];
+		uint64_t p = rand64(ctx->rng);
 		for (i = 0; i < base_n; i++) {
 			params[i] = p;
 		}
@@ -290,7 +389,8 @@ static void init_multi_rot(struct hashcontext *ctx,
 						 params,
 						 base_n,
 						 &collisions2,
-						 best_collisions2);
+						 best_collisions2,
+						 true);
 		if (collisions2 < best_collisions2) {
 			best_collisions2 = collisions2;
 			best_collisions = collisions;
@@ -308,19 +408,22 @@ static void init_multi_rot(struct hashcontext *ctx,
 		params[i] = best_param;
 	}
 
+	update_running_hash(ctx, params, base_n);
+
 	for (i = base_n; i < N_PARAMS - 1; i++) {
 		best_error = calc_best_error(ctx, i + 1);
 		best_param = 0;
 		best_collisions = ctx->n + 2;
 		best_collisions2 = UINT64_MAX;
 		for (j = 0; j < n_candidates; j++) {
-			params[i] = pool[j];
+			params[i] = rand64(ctx->rng);
 
 			collisions = test_params_with_l2(ctx,
 							 params,
 							 i + 1,
 							 &collisions2,
-							 best_collisions2);
+							 best_collisions2,
+							 false);
 			if (collisions2 < best_collisions2) {
 				best_collisions2 = collisions2;
 				best_collisions = collisions;
@@ -335,7 +438,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 			}
 		}
 		params[i] = best_param;
-
+		update_running_hash(ctx, params, i + 1);
 		remove_non_colliding_strings(ctx, params, i + 1);
 	}
 
@@ -343,16 +446,16 @@ static void init_multi_rot(struct hashcontext *ctx,
 	/* try extra hard for the last round */
 	uint64_t attempts = n_candidates * original_n_strings / ctx->n;
 	printf("making %lu last round attempts\n", attempts);
-	
+
 	for (j = 0; j < attempts; j++) {
 		params[N_PARAMS - 1] = rand64(ctx->rng);
-		collisions = test_params(ctx,
-					 params,
-					 N_PARAMS,
-					 best_collisions);
+		collisions = test_params_running(ctx,
+						 params,
+						 N_PARAMS,
+						 best_collisions);
 		if (collisions < best_collisions) {
 			best_collisions = collisions;
-			best_param = pool[j];
+			best_param = params[N_PARAMS - 1];
 			printf("new final round best at %d: collisions %u\n",
 			       j, collisions);
 			if (collisions == 0) {
@@ -361,7 +464,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 			}
 		}
 	}
-	free(pool);
+
 	c->params = params;
 	c->collisions = best_collisions;
 }
@@ -372,15 +475,21 @@ static int find_hash(const char *filename, uint bits,
 {
 	struct strings strings = load_strings(filename);
 	struct hashdata *data = new_hashdata(&strings);
+
 	N_PARAMS = (bits + (BITS_PER_PARAM - 1)) / BITS_PER_PARAM;
 	uint size = N_PARAMS * BITS_PER_PARAM;
 
-	uint64_t *hits = calloc((1 << size), 2);
+	uint64_t *hits = calloc((1 << size), sizeof(uint16_t));
 
 	struct hashcontext ctx = {data, strings.n_strings, hits};
 
 	ctx.bits = bits;
 	ctx.rng = rng;
+
+	if (! check_raw_hash(&ctx)) {
+		printf("This will never work because the raw hash collides\n");
+		exit(1);
+	}
 
 	uint64_t params[N_PARAMS];
 	struct multi_rot c;
