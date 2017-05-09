@@ -240,11 +240,15 @@ static uint test_params_running(struct hashcontext *ctx,
 	uint collisions = 0;
 	uint64_t *hits = ctx->hits;
 	uint32_t hash_mask = (1 << ctx->bits) - 1;
+	uint32_t hash;
 	for (j = 0; j < ctx->n; j++) {
-		uint32_t hash = running_unmasked_hash(ctx->data[j].raw_hash,
-						      ctx->data[j].running_hash,
-						      params, n);
-		hash &= hash_mask;
+		uint32_t comp = hash_component(params, n - 1,
+					       ctx->data[j].raw_hash);
+
+		ctx->data[j].running_hash ^= comp;
+		hash = ctx->data[j].running_hash & hash_mask;
+		ctx->data[j].running_hash ^= comp;
+
 		uint32_t f = hash >> 6;
 		uint64_t g = 1UL << (hash & 63);
 		collisions += (hits[f] & g) ? 1 : 0;
@@ -275,9 +279,11 @@ static uint test_params_with_l2(struct hashcontext *ctx,
 			hash = unmasked_hash(ctx->data[j].raw_hash,
 					     params, n);
 		} else {
-			hash = running_unmasked_hash(ctx->data[j].raw_hash,
-						      ctx->data[j].running_hash,
-						      params, n);
+			uint32_t comp = hash_component(params, n - 1,
+						       ctx->data[j].raw_hash);
+			ctx->data[j].running_hash ^= comp;
+			hash = ctx->data[j].running_hash & hash_mask;
+			ctx->data[j].running_hash ^= comp;
 		}
 		hash &= hash_mask;
 		uint16_t h = hits[hash];
