@@ -142,26 +142,41 @@ static inline uint32_t running_unmasked_hash(uint64_t raw_hash,
 					     uint32_t running_hash,
 					     uint64_t *params, uint n)
 {
-	uint32_t comp = hash_component(params, n - 1, raw_hash);
+	uint32_t comp = hash_component(params, n, raw_hash);
 	return running_hash ^ comp;
 }
+
 
 static inline void update_running_hash(struct hashcontext *ctx,
 				       uint64_t *params, uint n)
 {
 	uint i;
-	if (n > 0) {
-		for (i = 0; i < ctx->n; i++) {
-			ctx->data[i].running_hash = unmasked_hash(
-				ctx->data[i].raw_hash,
-				params, n);
-		}
-	} else {
-		for (i = 0; i < ctx->n; i++) {
-			ctx->data[i].running_hash = 0;
-		}
+	for (i = 0; i < ctx->n; i++) {
+		ctx->data[i].running_hash = unmasked_hash(
+			ctx->data[i].raw_hash,
+			params, n);
 	}
 	ctx->running_n = n;
+}
+
+static uint test_params(struct hashcontext *ctx,
+			uint64_t *params, uint n)
+{
+	int j;
+	uint collisions = 0;
+	uint64_t *hits = ctx->hits;
+	uint32_t hash_mask = (1 << ctx->bits) - 1;
+	for (j = 0; j < ctx->n; j++) {
+		uint32_t hash = unmasked_hash(ctx->data[j].raw_hash,
+					      params, n);
+		hash &= hash_mask;
+		uint32_t f = hash >> 6;
+		uint64_t g = 1UL << (hash & 63);
+		collisions += (hits[f] & g) ? 1 : 0;
+		hits[f] |= g;
+	}
+	memset(hits, 0, (1 << ctx->bits) / 8);
+	return collisions;
 }
 
 
@@ -169,10 +184,20 @@ static void describe_hash(struct hashcontext *ctx,
 			  struct multi_rot *c)
 {
 	int i, j;
-	if (c->collisions == 0) {
+
+	printf("bits %u mask %x\n", ctx->bits,
+	       (1 << ctx->bits) - 1);
+
+	uint collisions = test_params(ctx, c->params, N_PARAMS);
+
+	if (collisions != c->collisions) {
+		printf("\033[01;31m collisions mismatch! \033[00m\n"
+		       "presumed %u actual %u\n", c->collisions, collisions);
+	}
+	if (collisions == 0) {
 		printf("\033[01;31m");
 	};
-	printf("collisions %-3u ", c->collisions);
+	printf("collisions %-3u ", collisions);
 	printf("\033[00mbits: ");
 	for (i = 0; i < N_PARAMS; i++) {
 		uint64_t x = c->params[i];
@@ -205,30 +230,6 @@ static void describe_hash(struct hashcontext *ctx,
 		       MR_ROT(x), MR_MUL(x), mask);
 	}
 	printf("\033[00m\n");
-}
-
-static uint test_params(struct hashcontext *ctx,
-			uint64_t *params, uint n,
-			uint best_collisions)
-{
-	int j;
-	uint collisions = 0;
-	uint64_t *hits = ctx->hits;
-	uint32_t hash_mask = (1 << ctx->bits) - 1;
-	for (j = 0; j < ctx->n; j++) {
-		uint32_t hash = unmasked_hash(ctx->data[j].raw_hash,
-					      params, n);
-		hash &= hash_mask;
-		uint32_t f = hash >> 6;
-		uint64_t g = 1UL << (hash & 63);
-		collisions += (hits[f] & g) ? 1 : 0;
-		hits[f] |= g;
-		if (collisions >= best_collisions) {
-			break;
-		}
-	}
-	memset(hits, 0, (1 << ctx->bits) / 8);
-	return collisions;
 }
 
 static uint test_params_running(struct hashcontext *ctx,
@@ -309,6 +310,7 @@ static void remove_non_colliding_strings(struct hashcontext *ctx,
 						      ctx->data[j].running_hash,
 						      params, n);
 		hash &= hash_mask;
+		//printf("hash %u mask %u hits %p\n", hash, hash_mask, ctx->hits);
 		hits[hash]++;
 	}
 	/* hash again to find the unique ones */
@@ -344,7 +346,6 @@ static uint64_t calc_best_error(struct hashcontext *ctx, uint n_params)
 
 static void init_multi_rot(struct hashcontext *ctx,
 			   struct multi_rot *c,
-			   uint64_t *params,
 			   uint n_candidates)
 {
 	int i, j;
@@ -353,6 +354,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 	uint64_t best_param = 0;
 	uint64_t best_error;
 	uint64_t original_n_strings = ctx->n;
+	uint64_t *params = c->params;
 
 	update_running_hash(ctx, params, 0);
 
@@ -378,10 +380,12 @@ static void init_multi_rot(struct hashcontext *ctx,
 			best_collisions2 = collisions2;
 			best_collisions = collisions;
 			best_param = p;
-			printf("new best candidate at %d: err %lu best %lu diff %lu\n",
-			       j, collisions2, best_error, collisions2 - best_error);
+			printf("new best candidate at %d: err %lu "
+			       "best %lu diff %lu\n",
+			       j, collisions2, best_error,
+			       collisions2 - best_error);
 			if (best_error - collisions2 == 0) {
-				printf("found good enough candidate after %d\n", j);
+				printf("found good candidate after %d\n", j);
 				break;
 			}
 		}
@@ -414,8 +418,12 @@ static void init_multi_rot(struct hashcontext *ctx,
 				printf("new best candidate at %d: collisions %u "
 				       "err %lu > %lu diff %lu\n", j, collisions,
 				       collisions2, best_error, collisions2 - best_error);
+				if (collisions == 0) {
+					printf("we seem to be finished at %d\n", j);
+					goto done;
+				}
 				if (collisions2 == best_error) {
-					printf("found good enough candidate after %d\n", j);
+					printf("found good candidate after %d\n", j);
 					break;
 				}
 			}
@@ -447,8 +455,8 @@ static void init_multi_rot(struct hashcontext *ctx,
 			}
 		}
 	}
-
-	c->params = params;
+	params[N_PARAMS - 1] = best_param;
+  done:
 	c->collisions = best_collisions;
 }
 
