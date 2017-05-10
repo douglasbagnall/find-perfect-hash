@@ -219,7 +219,7 @@ static struct strings load_strings(const char *filename)
 #define QUOTE(x) QUOTE_(x)
 
 
-#if 0
+#if 1
 #define START_TIMER(name) struct timespec _time_start_ ## name; \
 	clock_gettime(CLOCK_MONOTONIC, &_time_start_ ## name)
 
