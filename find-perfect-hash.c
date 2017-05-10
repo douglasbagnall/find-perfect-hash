@@ -103,12 +103,16 @@ static bool check_raw_hash(struct hashcontext *ctx)
 	return false;
 }
 
-#if 1
+#if 0
 #define MR_ROT(x) ((x) & (uint64_t)63)
 #define MR_MUL(x) ((x) >> 6)
+#define MR_ROT_STEP 1
+#define MR_ROT_MASK 63UL
 #else
 #define MR_ROT(x) ((x) >> 58UL)
 #define MR_MUL(x) (x)
+#define MR_ROT_STEP (1ULL << 58)
+#define MR_ROT_MASK (63UL << 58)
 #endif
 
 #define MR_MASK(i) ((i == 0) ?						\
@@ -342,6 +346,17 @@ static uint64_t calc_best_error(struct hashcontext *ctx, uint n_params)
 	return sum;
 }
 
+
+static inline uint64_t next_param(struct rng *rng, uint round)
+{
+	static uint64_t base = 0;
+	uint r = round % 48;
+	if (r == 0) {
+		base = rand64(rng) & ~MR_ROT_MASK;
+	}
+	return base + r * MR_ROT_STEP;
+}
+
 static void init_multi_rot(struct hashcontext *ctx,
 			   struct multi_rot *c,
 			   uint n_candidates)
@@ -363,8 +378,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 		best_collisions = ctx->n + 2;
 		best_collisions2 = UINT64_MAX;
 		for (j = 0; j < n_candidates; j++) {
-			params[i] = rand64(ctx->rng);
-
+			params[i] = next_param(ctx->rng, j);
 			collisions = test_params_with_l2(ctx,
 							 params,
 							 i + 1,
