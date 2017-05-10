@@ -103,7 +103,7 @@ static bool check_raw_hash(struct hashcontext *ctx)
 
 #if 1
 #define MR_ROT(x) ((x) & (uint64_t)63)
-#define MR_MUL(x) ((x) >> 6)
+#define MR_MUL(x) ((x) >> (uint64_t)6)
 #else
 #define MR_ROT(x) ((x) >> 58UL)
 #define MR_MUL(x) (x)
@@ -167,8 +167,8 @@ static uint test_params(struct hashcontext *ctx,
 		uint32_t hash = unmasked_hash(ctx->data[j].raw_hash,
 					      params, n);
 		hash &= hash_mask;
-		uint32_t f = hash >> 6;
-		uint64_t g = 1UL << (hash & 63);
+		uint32_t f = hash >> (uint64_t)6;
+		uint64_t g = 1UL << (hash & (uint64_t)63);
 		collisions += (hits[f] & g) ? 1 : 0;
 		hits[f] |= g;
 	}
@@ -242,9 +242,7 @@ static uint test_params_running(struct hashcontext *ctx,
 		uint32_t comp = hash_component(params, n - 1,
 					       ctx->data[j].raw_hash);
 
-		ctx->data[j].running_hash ^= comp;
-		hash = ctx->data[j].running_hash & hash_mask;
-		ctx->data[j].running_hash ^= comp;
+		hash = (ctx->data[j].running_hash ^ comp) & hash_mask;
 
 		uint32_t f = hash >> 6;
 		uint64_t g = 1UL << (hash & 63);
@@ -278,9 +276,7 @@ static uint test_params_with_l2(struct hashcontext *ctx,
 		} else {
 			uint32_t comp = hash_component(params, n - 1,
 						       ctx->data[j].raw_hash);
-			ctx->data[j].running_hash ^= comp;
-			hash = ctx->data[j].running_hash & hash_mask;
-			ctx->data[j].running_hash ^= comp;
+			hash = (ctx->data[j].running_hash ^ comp) & hash_mask;
 		}
 		hash &= hash_mask;
 		uint16_t h = hits[hash];
