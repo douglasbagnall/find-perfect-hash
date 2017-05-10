@@ -367,7 +367,8 @@ static void init_multi_rot(struct hashcontext *ctx,
 	uint64_t best_error;
 	uint64_t original_n_strings = ctx->n;
 	uint64_t *params = c->params;
-
+	uint adaptive_n_candidates = n_candidates;
+	double ratio = 1.0;
 	update_running_hash(ctx, params, 0);
 
 	for (i = 0; i < N_PARAMS - 1; i++) {
@@ -376,7 +377,8 @@ static void init_multi_rot(struct hashcontext *ctx,
 		best_param = 0;
 		best_collisions = ctx->n + 2;
 		best_collisions2 = UINT64_MAX;
-		for (j = 0; j < n_candidates; j++) {
+		printf("trying %u candidates\n", adaptive_n_candidates);
+		for (j = 0; j < adaptive_n_candidates; j++) {
 			params[i] = next_param(ctx->rng, j, params, i);
 			collisions = test_params_with_l2(ctx,
 							 params,
@@ -387,7 +389,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 				best_collisions2 = collisions2;
 				best_collisions = collisions;
 				best_param = params[i];
-				double ratio = collisions2 * (1.0 / best_error);
+				ratio = collisions2 * (1.0 / best_error);
 				printf("new best at %d: collisions %u "
 				       "err %lu > %lu; diff %lu ratio %.3f\n",
 				       j, collisions, collisions2, best_error,
@@ -401,6 +403,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 					break;
 				}
 			}
+			adaptive_n_candidates = MIN(pow(n_candidates, ratio), UINT_MAX);
 		}
 		params[i] = best_param;
 		update_running_hash(ctx, params, i + 1);
