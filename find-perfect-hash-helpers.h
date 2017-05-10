@@ -46,7 +46,7 @@ static void rng_init(struct rng *x, uint64_t seed)
 	}
 }
 
-static void rng_random_init(struct rng *rng)
+static inline void rng_random_init(struct rng *rng)
 {
 	/* random enough for this */
 	struct timespec t;
