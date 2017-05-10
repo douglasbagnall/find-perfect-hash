@@ -19,7 +19,6 @@ struct hashcontext {
 	uint64_t *hits;
 	uint bits;
 	struct rng *rng;
-	uint running_n;
 	char *string_mem;
 };
 
@@ -155,7 +154,6 @@ static inline void update_running_hash(struct hashcontext *ctx,
 			ctx->data[i].raw_hash,
 			params, n);
 	}
-	ctx->running_n = n;
 }
 
 static uint test_params(struct hashcontext *ctx,
@@ -484,7 +482,6 @@ struct hashcontext *new_context(const char *filename, uint bits,
 	ctx->hits = hits;
 	ctx->bits = bits;
 	ctx->rng = rng;
-	ctx->running_n = 0;
 	ctx->string_mem = strings.mem;
 	return ctx;
 }
