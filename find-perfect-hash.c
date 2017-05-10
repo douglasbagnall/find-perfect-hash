@@ -414,7 +414,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 	START_TIMER(last);
 
 	for (j = 0; j < attempts; j++) {
-		params[N_PARAMS - 1] = rand64(ctx->rng);
+		params[N_PARAMS - 1] = next_param(ctx->rng, j, params, N_PARAMS);
 		collisions = test_params_running(ctx,
 						 params,
 						 N_PARAMS,
