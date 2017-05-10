@@ -207,30 +207,24 @@ static void describe_hash(struct hashcontext *ctx,
 	printf("\033[00mbits: ");
 	for (i = 0; i < N_PARAMS; i++) {
 		uint64_t x = c->params[i];
+		uint64_t masked = x  & ~MR_ROT_MASK;
 		uint mask = MR_MASK(i);
+		if (i) {
+			printf("\033[01;34m ^ ");
+		}
+
 		bool duplicate = false;
-		for (j = 0; j < i; j++) {
-			if (x == c->params[j]) {
+		for (j = 0; j < N_PARAMS; j++) {
+			if (i != j &&
+			    masked == (c->params[j] & ~MR_ROT_MASK)) {
 				duplicate = true;
 				break;
 			}
 		}
 		if (duplicate) {
-			continue;
-		}
-		for (j = i + 1; j < N_PARAMS; j++) {
-			if (x == c->params[j]) {
-				mask |= MR_MASK(j);
-			}
-		}
-		if (i) {
-			printf("\033[01;34m ^ ");
-		}
-
-		if (mask != MR_MASK(i)) {
 			printf("\033[01;33m");
 		} else {
-			printf("\033[01;%dm", 36 + (i & 1));
+			printf("\033[01;%dm", 36 + (i != 0));
 		}
 		printf("↻%-2lu ×%013lx & %04x ",
 		       MR_ROT(x), MR_MUL(x), mask);
