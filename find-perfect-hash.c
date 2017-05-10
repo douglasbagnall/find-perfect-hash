@@ -323,7 +323,7 @@ static void remove_non_colliding_strings(struct hashcontext *ctx,
 	}
 
 	ctx->n = k;
-	printf("%d params dropped %u unique strings, down to %u\n",
+	printf("after %d params dropped %u unique strings, leaving %u\n",
 	       n, j - k, k);
 
 	memset(hits, 0, (1 << ctx->bits) * sizeof(hits[0]));
@@ -387,9 +387,11 @@ static void init_multi_rot(struct hashcontext *ctx,
 				best_collisions2 = collisions2;
 				best_collisions = collisions;
 				best_param = params[i];
-				printf("new best candidate at %d: collisions %u "
-				       "err %lu > %lu diff %lu\n", j, collisions,
-				       collisions2, best_error, collisions2 - best_error);
+				double ratio = collisions2 * (1.0 / best_error);
+				printf("new best at %d: collisions %u "
+				       "err %lu > %lu; diff %lu ratio %.3f\n",
+				       j, collisions, collisions2, best_error,
+				       collisions2 - best_error, ratio);
 				if (collisions == 0) {
 					printf("we seem to be finished in round %d!\n", i);
 					goto done;
