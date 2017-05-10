@@ -214,3 +214,24 @@ static struct strings load_strings(const char *filename)
 	fclose(f);
 	return s;
 }
+
+#define QUOTE_(x) #x
+#define QUOTE(x) QUOTE_(x)
+
+
+#if 0
+#define START_TIMER(name) struct timespec _time_start_ ## name; \
+	clock_gettime(CLOCK_MONOTONIC, &_time_start_ ## name)
+
+#define PRINT_TIMER(name) do {						\
+	struct timespec _time_end_ ## name;				\
+	clock_gettime(CLOCK_MONOTONIC, &_time_end_ ## name);		\
+	time_t secs = _time_end_ ## name.tv_sec - _time_start_ ## name.tv_sec;	\
+	long nano = _time_end_ ## name.tv_nsec - _time_start_ ## name.tv_nsec;	\
+	double elapsed = secs + 1e-9 * nano;				\
+	printf("%s took %.4fs\n", QUOTE(name), elapsed);		\
+	} while (0)
+#else
+#define START_TIMER(name) /* name */
+#define PRINT_TIMER(name) /* name */
+#endif

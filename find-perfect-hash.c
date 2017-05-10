@@ -357,6 +357,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 	update_running_hash(ctx, params, 0);
 
 	for (i = 0; i < N_PARAMS - 1; i++) {
+		START_TIMER(l2);
 		best_error = calc_best_error(ctx, i);
 		best_param = 0;
 		best_collisions = ctx->n + 2;
@@ -389,12 +390,15 @@ static void init_multi_rot(struct hashcontext *ctx,
 		params[i] = best_param;
 		update_running_hash(ctx, params, i + 1);
 		remove_non_colliding_strings(ctx, params, i + 1);
+		PRINT_TIMER(l2);
 	}
 
 	best_param = 0;
 	/* try extra hard for the last round */
 	uint64_t attempts = n_candidates * original_n_strings / ctx->n;
 	printf("making %lu last round attempts\n", attempts);
+
+	START_TIMER(last);
 
 	for (j = 0; j < attempts; j++) {
 		params[N_PARAMS - 1] = rand64(ctx->rng);
@@ -414,6 +418,8 @@ static void init_multi_rot(struct hashcontext *ctx,
 		}
 	}
 	params[N_PARAMS - 1] = best_param;
+	PRINT_TIMER(last);
+
   done:
 	c->collisions = best_collisions;
 }
