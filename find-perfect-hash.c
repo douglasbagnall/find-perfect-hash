@@ -101,7 +101,7 @@ static bool check_raw_hash(struct hashcontext *ctx)
 	return false;
 }
 
-#if 0
+#if 1
 #define MR_ROT(x) ((x) & (uint64_t)63)
 #define MR_MUL(x) ((x) >> 6)
 #else
