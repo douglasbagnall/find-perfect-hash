@@ -347,12 +347,17 @@ static uint64_t calc_best_error(struct hashcontext *ctx, uint n_params)
 }
 
 
-static inline uint64_t next_param(struct rng *rng, uint round)
+static inline uint64_t next_param(struct rng *rng, uint round,
+				  uint64_t *params, uint n_params)
 {
 	static uint64_t base = 0;
 	uint r = round % 48;
 	if (r == 0) {
-		base = rand64(rng) & ~MR_ROT_MASK;
+		if (round < n_params * 48) {
+			base = params[round / 48] & ~MR_ROT_MASK;
+		} else {
+			base = rand64(rng) & ~MR_ROT_MASK;
+		}
 	}
 	return base + r * MR_ROT_STEP;
 }
@@ -378,7 +383,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 		best_collisions = ctx->n + 2;
 		best_collisions2 = UINT64_MAX;
 		for (j = 0; j < n_candidates; j++) {
-			params[i] = next_param(ctx->rng, j);
+			params[i] = next_param(ctx->rng, j, params, i);
 			collisions = test_params_with_l2(ctx,
 							 params,
 							 i + 1,
