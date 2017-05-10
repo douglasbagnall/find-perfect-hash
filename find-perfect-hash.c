@@ -140,7 +140,7 @@ static inline uint32_t running_unmasked_hash(uint64_t raw_hash,
 					     uint32_t running_hash,
 					     uint64_t *params, uint n)
 {
-	uint32_t comp = hash_component(params, n, raw_hash);
+	uint32_t comp = hash_component(params, n - 1, raw_hash);
 	return running_hash ^ comp;
 }
 
