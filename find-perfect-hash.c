@@ -2,7 +2,9 @@
 
 
 #define BITS_PER_PARAM 1
+#define BASE_N 4
 #define DETERMINISTIC 01
+
 
 #include "find-perfect-hash-helpers.h"
 
@@ -103,13 +105,16 @@ static bool check_raw_hash(struct hashcontext *ctx)
 
 #if 1
 #define MR_ROT(x) ((x) & (uint64_t)63)
-#define MR_MUL(x) ((x) >> (uint64_t)6)
+#define MR_MUL(x) ((x) >> 6)
 #else
 #define MR_ROT(x) ((x) >> 58UL)
 #define MR_MUL(x) (x)
 #endif
 
-#define MR_MASK(i) (((1 << BITS_PER_PARAM) - 1) << (i * BITS_PER_PARAM))
+#define MR_MASK(i) ((i == 0) ?						\
+		    (1 << BASE_N) - 1 :					\
+		    ((1 << BITS_PER_PARAM) - 1) << (BASE_N + (i - 1) * BITS_PER_PARAM))
+
 
 static inline uint32_t hash_component(uint64_t *params, uint i, uint64_t x)
 {
@@ -260,8 +265,7 @@ static uint test_params_running(struct hashcontext *ctx,
 static uint test_params_with_l2(struct hashcontext *ctx,
 				uint64_t *params, uint n,
 				uint64_t *collisions2,
-				uint64_t best_c2,
-				bool full)
+				uint64_t best_c2)
 {
 	int j;
 	uint collisions = 0;
@@ -269,15 +273,10 @@ static uint test_params_with_l2(struct hashcontext *ctx,
 	uint16_t *hits = (uint16_t *) ctx->hits;
 	uint64_t c2 = 0;
 	for (j = 0; j < ctx->n; j++) {
-		uint32_t hash;
-		if (full) {
-			hash = unmasked_hash(ctx->data[j].raw_hash,
-					     params, n);
-		} else {
-			uint32_t comp = hash_component(params, n - 1,
-						       ctx->data[j].raw_hash);
-			hash = (ctx->data[j].running_hash ^ comp) & hash_mask;
-		}
+		uint32_t comp = hash_component(params, n - 1,
+					       ctx->data[j].raw_hash);
+		uint32_t hash = (ctx->data[j].running_hash ^ comp) & hash_mask;
+
 		hash &= hash_mask;
 		uint16_t h = hits[hash];
 		c2 += 2 * h + 1;
@@ -335,7 +334,7 @@ static void remove_non_colliding_strings(struct hashcontext *ctx,
 
 static uint64_t calc_best_error(struct hashcontext *ctx, uint n_params)
 {
-	uint n_bits = n_params * BITS_PER_PARAM;
+	uint n_bits = BASE_N + n_params * BITS_PER_PARAM;
 	uint n = 1 << n_bits;
 	uint q = ctx->n / n;
 	uint r = ctx->n % n;
@@ -348,7 +347,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 			   uint n_candidates)
 {
 	int i, j;
-	uint collisions, best_collisions;
+	uint collisions, best_collisions = 0;
 	uint64_t collisions2, best_collisions2 = 0;
 	uint64_t best_param = 0;
 	uint64_t best_error;
@@ -357,47 +356,8 @@ static void init_multi_rot(struct hashcontext *ctx,
 
 	update_running_hash(ctx, params, 0);
 
-	best_collisions = ctx->n + 2;
-	best_collisions2 = UINT64_MAX;
-
-	const uint base_n = MIN(4 / BITS_PER_PARAM, N_PARAMS * 3 / 4);
-
-	best_error = calc_best_error(ctx, base_n);
-
-	for (j = 0; j < n_candidates; j++) {
-		uint64_t p = rand64(ctx->rng);
-		for (i = 0; i < base_n; i++) {
-			params[i] = p;
-		}
-		collisions = test_params_with_l2(ctx,
-						 params,
-						 base_n,
-						 &collisions2,
-						 best_collisions2,
-						 true);
-		if (collisions2 < best_collisions2) {
-			best_collisions2 = collisions2;
-			best_collisions = collisions;
-			best_param = p;
-			printf("new best candidate at %d: err %lu "
-			       "best %lu diff %lu\n",
-			       j, collisions2, best_error,
-			       collisions2 - best_error);
-			if (best_error - collisions2 == 0) {
-				printf("found good candidate after %d\n", j);
-				break;
-			}
-		}
-	}
-
-	for (i = 0; i < base_n; i++) {
-		params[i] = best_param;
-	}
-
-	update_running_hash(ctx, params, base_n);
-
-	for (i = base_n; i < N_PARAMS - 1; i++) {
-		best_error = calc_best_error(ctx, i + 1);
+	for (i = 0; i < N_PARAMS - 1; i++) {
+		best_error = calc_best_error(ctx, i);
 		best_param = 0;
 		best_collisions = ctx->n + 2;
 		best_collisions2 = UINT64_MAX;
@@ -408,8 +368,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 							 params,
 							 i + 1,
 							 &collisions2,
-							 best_collisions2,
-							 false);
+							 best_collisions2);
 			if (collisions2 < best_collisions2) {
 				best_collisions2 = collisions2;
 				best_collisions = collisions;
@@ -418,7 +377,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 				       "err %lu > %lu diff %lu\n", j, collisions,
 				       collisions2, best_error, collisions2 - best_error);
 				if (collisions == 0) {
-					printf("we seem to be finished at %d\n", j);
+					printf("we seem to be finished in round %d!\n", i);
 					goto done;
 				}
 				if (collisions2 == best_error) {
@@ -468,8 +427,8 @@ struct hashcontext *new_context(const char *filename, uint bits,
 	free(strings.strings); /* the (char**), not the (char*) */
 	struct hashcontext *ctx = malloc(sizeof(*ctx));
 
-	N_PARAMS = (bits + (BITS_PER_PARAM - 1)) / BITS_PER_PARAM;
-	uint size = N_PARAMS * BITS_PER_PARAM;
+	N_PARAMS = 1 + (bits - BASE_N + (BITS_PER_PARAM - 1)) / BITS_PER_PARAM;
+	uint size = BASE_N + (N_PARAMS - 1) * BITS_PER_PARAM;
 	printf("size %u bits %u\n", size, bits);
 	uint64_t *hits = calloc((1 << size), sizeof(uint16_t));
 
