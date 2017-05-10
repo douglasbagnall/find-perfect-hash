@@ -226,8 +226,8 @@ static void describe_hash(struct hashcontext *ctx,
 		} else {
 			printf("\033[01;%dm", 36 + (i != 0));
 		}
-		printf("↻%-2lu ×%013lx & %04x ",
-		       MR_ROT(x), MR_MUL(x), mask);
+		printf("×%015lx »%-2lu & %04x ",
+		       MR_MUL(x), MR_ROT(x), mask);
 	}
 	printf("\033[00m\n");
 }
