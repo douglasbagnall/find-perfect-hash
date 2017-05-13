@@ -431,7 +431,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 			   struct multi_rot *c,
 			   uint n_candidates)
 {
-	int i, j;
+	uint i, j;
 	uint collisions, best_collisions = 0;
 	uint64_t collisions2, best_collisions2 = 0;
 	uint64_t best_param = 0;
@@ -482,8 +482,9 @@ static void init_multi_rot(struct hashcontext *ctx,
 
 	best_param = 0;
 	/* try extra hard for the last round */
-	uint64_t attempts = n_candidates * original_n_strings / ctx->n;
-	printf("making %lu last round attempts\n", attempts);
+	uint attempts = MIN(((uint64_t)n_candidates * original_n_strings / ctx->n),
+			    UINT_MAX);
+	printf("making %u last round attempts\n", attempts);
 
 	START_TIMER(last);
 
@@ -542,7 +543,6 @@ static void free_context(struct hashcontext *ctx)
 	free(ctx);
 	ctx = NULL;
 }
-
 
 static int find_hash(const char *filename, uint bits,
 		     uint n_candidates, struct rng *rng)
