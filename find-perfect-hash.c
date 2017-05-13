@@ -271,6 +271,38 @@ static uint test_params_with_l2(struct hashcontext *ctx,
 	uint16_t *hits = (uint16_t *) ctx->hits;
 	uint64_t c2 = 0;
 	for (j = 0; j < ctx->n; j++) {
+		uint32_t hash = unmasked_hash(ctx->data[j].raw_hash,
+					      params, n);
+		hash &= hash_mask;
+		uint16_t h = hits[hash];
+		c2 += 2 * h + 1;
+		if (h) {
+			collisions++;
+		}
+		if (c2 >= best_c2) {
+			collisions = UINT_MAX;
+			break;
+		}
+		hits[hash] = h + 1;
+	}
+
+	*collisions2 = c2;
+	memset(hits, 0, (1 << ctx->bits) * sizeof(hits[0]));
+	return collisions;
+}
+
+
+static uint test_params_with_l2_running(struct hashcontext *ctx,
+					uint64_t *params, uint n,
+					uint64_t *collisions2,
+					uint64_t best_c2)
+{
+	int j;
+	uint collisions = 0;
+	uint32_t hash_mask = (1 << ctx->bits) - 1;
+	uint16_t *hits = (uint16_t *) ctx->hits;
+	uint64_t c2 = 0;
+	for (j = 0; j < ctx->n; j++) {
 		uint32_t comp = hash_component(params, n - 1,
 					       ctx->data[j].raw_hash);
 		uint32_t hash = (ctx->data[j].running_hash ^ comp) & hash_mask;
@@ -340,6 +372,45 @@ static uint64_t calc_best_error(struct hashcontext *ctx, uint n_params)
 	return sum;
 }
 
+static uint find_worst_param(struct hashcontext *ctx,
+			   struct multi_rot *c)
+{
+	uint64_t *params = c->params;
+	uint64_t collisions2, best_collisions2;
+	uint32_t collisions, best_collisions;
+	uint i, best_i = 0, best_i2 = 0;
+	best_collisions = ctx->n + 2;
+	best_collisions2 = UINT64_MAX;
+	
+	for (i = 1; i < N_PARAMS; i++) {
+		uint64_t p = params[i];
+		params[i] = 0;
+		collisions = test_params_with_l2(ctx,
+						 params,
+						 N_PARAMS,
+						 &collisions2,
+						 UINT64_MAX);
+		params[i] = p;
+
+		printf("removing param %u gives collisions %u, "
+		       "collisions2 %lu\n", i, collisions, collisions2);
+
+		if (collisions2 < best_collisions2) {
+			best_collisions2 = collisions2;
+			best_i2 = i;
+		}
+
+		if (collisions < best_collisions) {
+			best_collisions = collisions;
+			best_i = i;
+		}
+	}
+	printf("best collisions: %u without param %u\n",
+	       best_collisions, best_i);
+	printf("best collisions2: %lu without param %u\n",
+	       best_collisions2, best_i2);
+	return best_i2;
+}
 
 static inline uint64_t next_param(struct rng *rng, uint round,
 				  uint64_t *params, uint n_params)
@@ -378,11 +449,12 @@ static void init_multi_rot(struct hashcontext *ctx,
 		best_collisions2 = UINT64_MAX;
 		for (j = 0; j < n_candidates; j++) {
 			params[i] = next_param(ctx->rng, j, params, i);
-			collisions = test_params_with_l2(ctx,
-							 params,
-							 i + 1,
-							 &collisions2,
-							 best_collisions2);
+			collisions = test_params_with_l2_running(
+				ctx,
+				params,
+				i + 1,
+				&collisions2,
+				best_collisions2);
 			if (collisions2 < best_collisions2) {
 				best_collisions2 = collisions2;
 				best_collisions = collisions;
@@ -491,6 +563,8 @@ static int find_hash(const char *filename, uint bits,
 	struct hashcontext *ctx2 = new_context(filename, bits,
 					       n_candidates, rng);
 
+
+	find_worst_param(ctx2, &c);
 	describe_hash(ctx2, &c);
 	free(c.params);
 	free_context(ctx);
