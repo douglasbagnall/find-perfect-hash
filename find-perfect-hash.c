@@ -447,7 +447,12 @@ static void init_multi_rot(struct hashcontext *ctx,
 		best_param = 0;
 		best_collisions = ctx->n + 2;
 		best_collisions2 = UINT64_MAX;
-		for (j = 0; j < n_candidates; j++) {
+		uint attempts = MIN(((uint64_t)n_candidates *
+				     original_n_strings / ctx->n),
+				    UINT_MAX);
+		printf("making %u attempts\n", attempts);
+		
+		for (j = 0; j < attempts; j++) {
 			params[i] = next_param(ctx->rng, j, params, i);
 			collisions = test_params_with_l2_running(
 				ctx,
