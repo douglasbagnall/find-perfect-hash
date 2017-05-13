@@ -441,7 +441,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 
 	update_running_hash(ctx, params, 0);
 
-	for (i = 0; i < N_PARAMS - 1; i++) {
+	for (i = 0; i < N_PARAMS ; i++) {
 		START_TIMER(l2);
 		best_error = calc_best_error(ctx, i);
 		best_param = 0;
@@ -484,7 +484,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 		remove_non_colliding_strings(ctx, params, i + 1);
 		PRINT_TIMER(l2);
 	}
-
+	goto done;
 	best_param = 0;
 	/* try extra hard for the last round */
 	uint attempts = MIN(((uint64_t)n_candidates * original_n_strings / ctx->n),
