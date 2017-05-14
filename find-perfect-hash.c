@@ -189,8 +189,8 @@ static bool reorder_params(struct multi_rot *c, uint a, uint b)
 	printf("reordering %u %u, diff %u r1 %lu r2 %lu\n",
 	       a, b, diff, r1, r2);
 
-	if (diff + r1 > 63 ||
-	    diff > r2) {
+	if (diff > r1 ||
+	    diff + r2 > 63) {
 		printf("diff %u r1 %lu r2 %lu\n", diff, r1, r2);
 		return false;
 	}
@@ -319,6 +319,7 @@ static uint test_params_with_l2(struct hashcontext *ctx,
 			collisions++;
 		}
 		if (c2 >= best_c2) {
+			//printf("hit limit at %d\n", j);
 			collisions = UINT_MAX;
 			break;
 		}
@@ -353,6 +354,7 @@ static uint test_params_with_l2_running(struct hashcontext *ctx,
 			collisions++;
 		}
 		if (c2 >= best_c2) {
+			//printf("j: %d, c2 %lu\n", j, c2);
 			collisions = UINT_MAX;
 			break;
 		}
@@ -411,6 +413,21 @@ static uint64_t calc_best_error(struct hashcontext *ctx, uint n_params)
 	return sum;
 }
 
+static inline uint64_t next_param(struct rng *rng, uint round,
+				  uint64_t *params, uint n_params)
+{
+	static uint64_t base = 0;
+	uint r = round % 48;
+	if (r == 0) {
+		if (round < n_params * 48) {
+			base = params[round / 48] & ~MR_ROT_MASK;
+		} else {
+			base = rand64(rng) & ~MR_ROT_MASK;
+		}
+	}
+	return base + r * MR_ROT_STEP;
+}
+
 
 
 static uint find_worst_param(struct hashcontext *ctx,
@@ -459,62 +476,50 @@ static uint find_worst_param(struct hashcontext *ctx,
 						   N_PARAMS,
 						   &orig_collisions2,
 						   UINT64_MAX);
-	for (i = 1; i < N_PARAMS; i++) {
-		for (j = 1; j < N_PARAMS; j++) {
-			bool reordered = reorder_params(c, i, j);
-			if (! reordered) {
-				printf("failed to reorder %u -> %u\n", i, j);
-				continue;
-			}
-			collisions = test_params_with_l2(ctx,
-							 params,
-							 N_PARAMS,
-							 &collisions2,
-							 UINT64_MAX);
-			if (collisions != orig_collisions ||
-			    collisions2 != orig_collisions2) {
-				printf("reorder %u -> %u collisions mismatch "
-				       "%u vs %u, squared %lu %lu\n", i, j,
-				       collisions, orig_collisions,
-				       collisions2, orig_collisions2);
-			}
-			reordered = reorder_params(c, j, i);
-			if (! reordered) {
-				printf("failed to restore order %u <- %u\n", i, j);
-				continue;
-			}
-			collisions = test_params_with_l2(ctx,
-							 params,
-							 N_PARAMS,
-							 &collisions2,
-							 UINT64_MAX);
-			if (collisions != orig_collisions ||
-			    collisions2 != orig_collisions2) {
-				printf("restore %u <- %u collisions mismatch "
-				       "%u vs %u, squared %lu %lu\n", i, j,
-				       collisions, orig_collisions,
-				       collisions2, orig_collisions2);
+	best_collisions2 = orig_collisions2;
+	best_collisions = orig_collisions;
+
+	for (i = 1; i < N_PARAMS - 2; i++) {
+		bool reordered = reorder_params(c, i, N_PARAMS - 1);
+		uint64_t best_param = params[N_PARAMS - 1];
+		if (! reordered) {
+			printf("failed to reorder %u -> %u\n", i, N_PARAMS - 1);
+			continue;
+		}
+		update_running_hash(ctx, params, N_PARAMS);
+
+		uint attempts = 100000;
+		for (j = 0; j < attempts; j++) {
+			params[N_PARAMS - 1] = next_param(ctx->rng, j, params, N_PARAMS - 1);
+			collisions = test_params_with_l2(
+				ctx,
+				params,
+				N_PARAMS,
+				&collisions2,
+				best_collisions2);
+			//printf("%d: param %lx collisions %u err %lu best %lu\n",
+			//      j, params[N_PARAMS -1], collisions, collisions2,
+			//      best_collisions2);
+			if (collisions2 < best_collisions2) {
+				best_collisions2 = collisions2;
+				best_collisions = collisions;
+				best_param = params[i];
+				printf("new best at %d: collisions %u err %lu\n",
+				       j, collisions, collisions2);
+				if (collisions == 0) {
+					printf("we seem to be finished in round %d!\n", i);
+					goto done;
+				}
 			}
 		}
+		params[N_PARAMS - 1] = best_param;
+		reordered = reorder_params(c, N_PARAMS - 1, i);
+		if (! reordered) {
+			printf("failed to restore %u -> %u\n", i, N_PARAMS - 1);
+		}
 	}
-
-
+  done:
 	return best_i2;
-}
-
-static inline uint64_t next_param(struct rng *rng, uint round,
-				  uint64_t *params, uint n_params)
-{
-	static uint64_t base = 0;
-	uint r = round % 48;
-	if (r == 0) {
-		if (round < n_params * 48) {
-			base = params[round / 48] & ~MR_ROT_MASK;
-		} else {
-			base = rand64(rng) & ~MR_ROT_MASK;
-		}
-	}
-	return base + r * MR_ROT_STEP;
 }
 
 static void init_multi_rot(struct hashcontext *ctx,
