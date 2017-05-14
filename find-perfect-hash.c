@@ -166,44 +166,6 @@ static inline void update_running_hash(struct hashcontext *ctx,
 }
 
 
-static bool reorder_params(struct multi_rot *c, uint a, uint b)
-{
-	if (a == b) {
-		return true;
-	}
-	if ( a > b) {
-		uint temp = a;
-		a = b;
-		b = temp;
-	}
-	uint diff = b - a;
-	uint64_t *params = c->params;
-	uint64_t p1 = params[a];
-	uint64_t p2 = params[b];
-	uint64_t mul1 = params[a] & ~MR_ROT_MASK;
-	uint64_t mul2 = params[b] & ~MR_ROT_MASK;
-	uint64_t rot1 = p1 & MR_ROT_MASK;
-	uint64_t rot2 = p2 & MR_ROT_MASK;
-	uint64_t r1 = MR_ROT(p1);
-	uint64_t r2 = MR_ROT(p2);
-	printf("reordering %u %u, diff %u r1 %lu r2 %lu\n",
-	       a, b, diff, r1, r2);
-
-	if (diff > r1 ||
-	    diff + r2 > 63) {
-		printf("diff %u r1 %lu r2 %lu\n", diff, r1, r2);
-		return false;
-	}
-
-	uint64_t new1 = (rot1 - diff * MR_ROT_STEP) & MR_ROT_MASK;
-	uint64_t new2 = (rot2 + diff * MR_ROT_STEP) & MR_ROT_MASK;
-
-	params[b] = mul1 | new1;
-	params[a] = mul2 | new2;
-	return true;
-}
-
-
 static uint test_params(struct hashcontext *ctx,
 			uint64_t *params, uint n)
 {
@@ -299,39 +261,6 @@ static uint test_params_running(struct hashcontext *ctx,
 }
 
 
-static uint test_params_with_l2(struct hashcontext *ctx,
-				uint64_t *params, uint n,
-				uint64_t *collisions2,
-				uint64_t best_c2)
-{
-	int j;
-	uint collisions = 0;
-	uint32_t hash_mask = (1 << ctx->bits) - 1;
-	uint16_t *hits = (uint16_t *) ctx->hits;
-	uint64_t c2 = 0;
-	for (j = 0; j < ctx->n; j++) {
-		uint32_t hash = unmasked_hash(ctx->data[j].raw_hash,
-					      params, n);
-		hash &= hash_mask;
-		uint16_t h = hits[hash];
-		c2 += 2 * h + 1;
-		if (h) {
-			collisions++;
-		}
-		if (c2 >= best_c2) {
-			//printf("hit limit at %d\n", j);
-			collisions = UINT_MAX;
-			break;
-		}
-		hits[hash] = h + 1;
-	}
-
-	*collisions2 = c2;
-	memset(hits, 0, (1 << ctx->bits) * sizeof(hits[0]));
-	return collisions;
-}
-
-
 static uint test_params_with_l2_running(struct hashcontext *ctx,
 					uint64_t *params, uint n,
 					uint64_t *collisions2,
@@ -354,7 +283,6 @@ static uint test_params_with_l2_running(struct hashcontext *ctx,
 			collisions++;
 		}
 		if (c2 >= best_c2) {
-			//printf("j: %d, c2 %lu\n", j, c2);
 			collisions = UINT_MAX;
 			break;
 		}
@@ -429,53 +357,6 @@ static inline uint64_t next_param(struct rng *rng, uint round,
 }
 
 
-
-static void retry(struct hashcontext *ctx,
-		  struct multi_rot *c,
-		  uint attempts)
-{
-	uint64_t *params = c->params;
-	uint32_t collisions, best_collisions = c->collisions;
-	uint i, j;
-
-	for (i = N_PARAMS - 4; i < N_PARAMS - 2; i++) {
-		bool reordered = reorder_params(c, i, N_PARAMS - 1);
-		if (! reordered) {
-			printf("failed to reorder %u -> %u\n", i, N_PARAMS - 1);
-			continue;
-		}
-		uint64_t best_param = params[N_PARAMS - 1];
-
-		update_running_hash(ctx, params, N_PARAMS - 1);
-
-		START_TIMER(retry);
-
-		for (j = 0; j < attempts; j++) {
-			params[N_PARAMS - 1] = next_param(ctx->rng, j, params, N_PARAMS);
-			collisions = test_params_running(ctx,
-							 params,
-							 N_PARAMS,
-							 best_collisions);
-			if (collisions < best_collisions) {
-				best_collisions = collisions;
-				best_param = params[N_PARAMS - 1];
-				printf("new best at %d: collisions %u\n",
-				       j, collisions);
-				if (collisions == 0) {
-					printf("found a winner after %d\n", j);
-					break;
-				}
-			}
-		}
-		params[N_PARAMS - 1] = best_param;
-		PRINT_TIMER(retry);
-		//reordered = reorder_params(c, N_PARAMS - 1, i);
-		//if (! reordered) {
-		//printf("failed to restore %u -> %u\n", i, N_PARAMS - 1);
-		//}
-	}
-}
-
 static void init_multi_rot(struct hashcontext *ctx,
 			   struct multi_rot *c,
 			   uint n_candidates)
@@ -490,7 +371,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 
 	update_running_hash(ctx, params, 0);
 
-	for (i = 0; i < N_PARAMS ; i++) {
+	for (i = 0; i < N_PARAMS - 1; i++) {
 		START_TIMER(l2);
 		best_error = calc_best_error(ctx, i);
 		best_param = 0;
@@ -533,7 +414,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 		remove_non_colliding_strings(ctx, params, i + 1);
 		PRINT_TIMER(l2);
 	}
-	goto done;
+
 	best_param = 0;
 	/* try extra hard for the last round */
 	uint attempts = MIN(((uint64_t)n_candidates * original_n_strings / ctx->n),
@@ -618,8 +499,6 @@ static int find_hash(const char *filename, uint bits,
 					       n_candidates, rng);
 
 
-	describe_hash(ctx2, &c);
-	retry(ctx2, &c, n_candidates * 5);
 	describe_hash(ctx2, &c);
 	free(c.params);
 	free_context(ctx);
