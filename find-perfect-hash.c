@@ -430,96 +430,50 @@ static inline uint64_t next_param(struct rng *rng, uint round,
 
 
 
-static uint find_worst_param(struct hashcontext *ctx,
-			     struct multi_rot *c)
+static void retry(struct hashcontext *ctx,
+		  struct multi_rot *c,
+		  uint attempts)
 {
 	uint64_t *params = c->params;
-	uint64_t collisions2, best_collisions2;
-	uint32_t collisions, best_collisions;
-	uint i, j, best_i = 0, best_i2 = 0;
-	best_collisions = ctx->n + 2;
-	best_collisions2 = UINT64_MAX;
+	uint32_t collisions, best_collisions = c->collisions;
+	uint i, j;
 
-	for (i = 1; i < N_PARAMS; i++) {
-		uint64_t p = params[i];
-		params[i] = 0;
-		collisions = test_params_with_l2(ctx,
-						 params,
-						 N_PARAMS,
-						 &collisions2,
-						 UINT64_MAX);
-		params[i] = p;
-
-		printf("removing param %u gives collisions %u, "
-		       "collisions2 %lu\n", i, collisions, collisions2);
-
-		if (collisions2 < best_collisions2) {
-			best_collisions2 = collisions2;
-			best_i2 = i;
-		}
-
-		if (collisions < best_collisions) {
-			best_collisions = collisions;
-			best_i = i;
-		}
-	}
-	printf("best collisions: %u without param %u\n",
-	       best_collisions, best_i);
-	printf("best collisions2: %lu without param %u\n",
-	       best_collisions2, best_i2);
-
-	uint64_t params2[N_PARAMS];
-	uint64_t orig_collisions2;
-	memcpy(params2, params, sizeof(uint64_t) * N_PARAMS);
-	uint orig_collisions = test_params_with_l2(ctx,
-						   params,
-						   N_PARAMS,
-						   &orig_collisions2,
-						   UINT64_MAX);
-	best_collisions2 = orig_collisions2;
-	best_collisions = orig_collisions;
-
-	for (i = 1; i < N_PARAMS - 2; i++) {
+	for (i = N_PARAMS - 4; i < N_PARAMS - 2; i++) {
 		bool reordered = reorder_params(c, i, N_PARAMS - 1);
-		uint64_t best_param = params[N_PARAMS - 1];
 		if (! reordered) {
 			printf("failed to reorder %u -> %u\n", i, N_PARAMS - 1);
 			continue;
 		}
-		update_running_hash(ctx, params, N_PARAMS);
+		uint64_t best_param = params[N_PARAMS - 1];
 
-		uint attempts = 100000;
+		update_running_hash(ctx, params, N_PARAMS - 1);
+
+		START_TIMER(retry);
+
 		for (j = 0; j < attempts; j++) {
-			params[N_PARAMS - 1] = next_param(ctx->rng, j, params, N_PARAMS - 1);
-			collisions = test_params_with_l2(
-				ctx,
-				params,
-				N_PARAMS,
-				&collisions2,
-				best_collisions2);
-			//printf("%d: param %lx collisions %u err %lu best %lu\n",
-			//      j, params[N_PARAMS -1], collisions, collisions2,
-			//      best_collisions2);
-			if (collisions2 < best_collisions2) {
-				best_collisions2 = collisions2;
+			params[N_PARAMS - 1] = next_param(ctx->rng, j, params, N_PARAMS);
+			collisions = test_params_running(ctx,
+							 params,
+							 N_PARAMS,
+							 best_collisions);
+			if (collisions < best_collisions) {
 				best_collisions = collisions;
-				best_param = params[i];
-				printf("new best at %d: collisions %u err %lu\n",
-				       j, collisions, collisions2);
+				best_param = params[N_PARAMS - 1];
+				printf("new best at %d: collisions %u\n",
+				       j, collisions);
 				if (collisions == 0) {
-					printf("we seem to be finished in round %d!\n", i);
-					goto done;
+					printf("found a winner after %d\n", j);
+					break;
 				}
 			}
 		}
 		params[N_PARAMS - 1] = best_param;
-		reordered = reorder_params(c, N_PARAMS - 1, i);
-		if (! reordered) {
-			printf("failed to restore %u -> %u\n", i, N_PARAMS - 1);
-		}
+		PRINT_TIMER(retry);
+		//reordered = reorder_params(c, N_PARAMS - 1, i);
+		//if (! reordered) {
+		//printf("failed to restore %u -> %u\n", i, N_PARAMS - 1);
+		//}
 	}
-  done:
-	return best_i2;
 }
 
 static void init_multi_rot(struct hashcontext *ctx,
@@ -665,7 +619,7 @@ static int find_hash(const char *filename, uint bits,
 
 
 	describe_hash(ctx2, &c);
-	find_worst_param(ctx2, &c);
+	retry(ctx2, &c, n_candidates * 5);
 	describe_hash(ctx2, &c);
 	free(c.params);
 	free_context(ctx);
