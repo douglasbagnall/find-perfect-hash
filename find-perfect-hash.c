@@ -278,7 +278,7 @@ static uint test_params_with_l2_running(struct hashcontext *ctx,
 
 		hash &= hash_mask;
 		uint16_t h = hits[hash];
-		c2 += 2 * h + 1;
+		c2 += h;
 		if (h) {
 			collisions++;
 		}
@@ -337,23 +337,18 @@ static uint64_t calc_best_error(struct hashcontext *ctx, uint n_params)
 	uint n = 1 << n_bits;
 	uint q = ctx->n / n;
 	uint r = ctx->n % n;
-	uint64_t sum = n * q * q + 2 * q * r + r;
+	uint64_t sum = q * (n * (q - 1) + 2 * r) / 2;
 	return sum;
 }
 
 static inline uint64_t next_param(struct rng *rng, uint round,
 				  uint64_t *params, uint n_params)
 {
-	static uint64_t base = 0;
-	uint r = round % 48;
-	if (r == 0) {
-		if (round < n_params * 48) {
-			base = params[round / 48] & ~MR_ROT_MASK;
-		} else {
-			base = rand64(rng) & ~MR_ROT_MASK;
-		}
-	}
-	return base + r * MR_ROT_STEP;
+	uint64_t p;
+	do {
+		p = rand64(rng);
+	} while (MR_ROT(p) > 63 - n_params);
+	return p;
 }
 
 
@@ -394,11 +389,10 @@ static void init_multi_rot(struct hashcontext *ctx,
 				best_collisions2 = collisions2;
 				best_collisions = collisions;
 				best_param = params[i];
-				double ratio = collisions2 * (1.0 / best_error);
 				printf("new best at %d: collisions %u "
-				       "err %lu > %lu; diff %lu ratio %.3f\n",
+				       "err %lu > %lu; diff %lu\n",
 				       j, collisions, collisions2, best_error,
-				       collisions2 - best_error, ratio);
+				       collisions2 - best_error);
 				if (collisions == 0) {
 					printf("we seem to be finished in round %d!\n", i);
 					goto done;
