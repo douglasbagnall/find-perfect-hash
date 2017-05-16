@@ -18,7 +18,7 @@ struct hashdata {
 struct hashcontext {
 	struct hashdata *data;
 	uint n;
-	uint64_t *hits;
+	uint16_t *hits;
 	uint bits;
 	struct rng *rng;
 	char *string_mem;
@@ -171,18 +171,20 @@ static uint test_params(struct hashcontext *ctx,
 {
 	int j;
 	uint collisions = 0;
-	uint64_t *hits = ctx->hits;
+	uint64_t *hits = (uint64_t *)ctx->hits;
 	uint32_t hash_mask = (1 << ctx->bits) - 1;
 	for (j = 0; j < ctx->n; j++) {
 		uint32_t hash = unmasked_hash(ctx->data[j].raw_hash,
 					      params, n);
+#if BITS_PER_PARAM > 1
 		hash &= hash_mask;
+#endif
 		uint32_t f = hash >> (uint64_t)6;
 		uint64_t g = 1UL << (hash & (uint64_t)63);
 		collisions += (hits[f] & g) ? 1 : 0;
 		hits[f] |= g;
 	}
-	memset(hits, 0, (1 << ctx->bits) / 8);
+	memset(hits, 0, (hash_mask + 1) / 8);
 	return collisions;
 }
 
@@ -239,15 +241,17 @@ static uint test_params_running(struct hashcontext *ctx,
 {
 	int j;
 	uint collisions = 0;
-	uint64_t *hits = ctx->hits;
+	uint64_t *hits = (uint64_t *)ctx->hits;
 	uint32_t hash_mask = (1 << ctx->bits) - 1;
 	uint32_t hash;
 	for (j = 0; j < ctx->n; j++) {
 		uint32_t comp = hash_component(params, n - 1,
 					       ctx->data[j].raw_hash);
 
-		hash = (ctx->data[j].running_hash ^ comp) & hash_mask;
-
+		hash = (ctx->data[j].running_hash ^ comp);
+#if BITS_PER_PARAM > 1
+		hash &= hash_mask;
+#endif
 		uint32_t f = hash >> 6;
 		uint64_t g = 1UL << (hash & 63);
 		collisions += (hits[f] & g) ? 1 : 0;
@@ -256,42 +260,35 @@ static uint test_params_running(struct hashcontext *ctx,
 			break;
 		}
 	}
-	memset(hits, 0, (1 << ctx->bits) / 8);
+	memset(hits, 0, (hash_mask + 1) / 8);
 	return collisions;
 }
 
 
-static uint test_params_with_l2_running(struct hashcontext *ctx,
-					uint64_t *params, uint n,
-					uint64_t *collisions2,
-					uint64_t best_c2)
+static uint64_t test_params_with_l2_running(struct hashcontext *ctx,
+					    uint64_t *params, uint n,
+					    uint64_t best_c2)
 {
 	int j;
-	uint collisions = 0;
 	uint32_t hash_mask = (1 << ctx->bits) - 1;
-	uint16_t *hits = (uint16_t *) ctx->hits;
+	uint16_t *hits = ctx->hits;
 	uint64_t c2 = 0;
 	for (j = 0; j < ctx->n; j++) {
 		uint32_t comp = hash_component(params, n - 1,
 					       ctx->data[j].raw_hash);
-		uint32_t hash = (ctx->data[j].running_hash ^ comp) & hash_mask;
-
+		uint32_t hash = (ctx->data[j].running_hash ^ comp);
+#if BITS_PER_PARAM > 1
 		hash &= hash_mask;
+#endif
 		uint16_t h = hits[hash];
 		c2 += h;
-		if (h) {
-			collisions++;
-		}
 		if (c2 >= best_c2) {
-			collisions = UINT_MAX;
 			break;
 		}
 		hits[hash] = h + 1;
 	}
-
-	*collisions2 = c2;
-	memset(hits, 0, (1 << ctx->bits) * sizeof(hits[0]));
-	return collisions;
+	memset(hits, 0, (hash_mask + 1) * sizeof(hits[0]));
+	return c2;
 }
 
 
@@ -300,7 +297,7 @@ static void remove_non_colliding_strings(struct hashcontext *ctx,
 {
 	int j, k;
 	uint32_t hash_mask = (1 << ctx->bits) - 1;
-	uint16_t *hits = (uint16_t *) ctx->hits;
+	uint16_t *hits = ctx->hits;
 	/* hash once for the counts */
 	for (j = 0; j < ctx->n; j++) {
 		uint32_t hash = running_unmasked_hash(ctx->data[j].raw_hash,
@@ -357,7 +354,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 			   uint n_candidates)
 {
 	uint i, j;
-	uint collisions, best_collisions = 0;
+	uint collisions, best_collisions = UINT_MAX;
 	uint64_t collisions2, best_collisions2 = 0;
 	uint64_t best_param = 0;
 	uint64_t best_error;
@@ -370,7 +367,6 @@ static void init_multi_rot(struct hashcontext *ctx,
 		START_TIMER(l2);
 		best_error = calc_best_error(ctx, i);
 		best_param = 0;
-		best_collisions = ctx->n + 2;
 		best_collisions2 = UINT64_MAX;
 		uint attempts = MIN(((uint64_t)n_candidates *
 				     original_n_strings / ctx->n),
@@ -379,26 +375,28 @@ static void init_multi_rot(struct hashcontext *ctx,
 
 		for (j = 0; j < attempts; j++) {
 			params[i] = next_param(ctx->rng, j, params, i);
-			collisions = test_params_with_l2_running(
+			collisions2 = test_params_with_l2_running(
 				ctx,
 				params,
 				i + 1,
-				&collisions2,
 				best_collisions2);
 			if (collisions2 < best_collisions2) {
 				best_collisions2 = collisions2;
-				best_collisions = collisions;
 				best_param = params[i];
-				printf("new best at %d: collisions %u "
+				printf("new best at %d: "
 				       "err %lu > %lu; diff %lu\n",
-				       j, collisions, collisions2, best_error,
+				       j, collisions2, best_error,
 				       collisions2 - best_error);
-				if (collisions == 0) {
-					printf("we seem to be finished in round %d!\n", i);
-					goto done;
-				}
 				if (collisions2 == best_error) {
 					printf("found good candidate after %d\n", j);
+					collisions = test_params_running(ctx,
+									 params,
+									 i + 1,
+									 UINT_MAX);
+					if (collisions == 0) {
+						printf("we seem to be finished in round %d!\n", i);
+						goto done;
+					}
 					break;
 				}
 			}
@@ -453,7 +451,7 @@ struct hashcontext *new_context(const char *filename, uint bits,
 	N_PARAMS = 1 + (bits - BASE_N + (BITS_PER_PARAM - 1)) / BITS_PER_PARAM;
 	uint size = BASE_N + (N_PARAMS - 1) * BITS_PER_PARAM;
 	printf("size %u bits %u\n", size, bits);
-	uint64_t *hits = calloc((1 << size), sizeof(uint16_t));
+	uint16_t *hits = calloc((1 << size), sizeof(hits[0]));
 
 	ctx->data = data;
 	ctx->n = strings.n_strings;
