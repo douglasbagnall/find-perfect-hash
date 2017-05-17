@@ -334,7 +334,7 @@ static uint64_t calc_best_error(struct hashcontext *ctx, uint n_params)
 	return sum;
 }
 
-static inline uint64_t next_param(struct rng *rng, uint round,
+static inline uint64_t next_param(struct rng *rng, uint64_t round,
 				  uint64_t *params, uint n_params)
 {
 	uint64_t p;
@@ -349,7 +349,8 @@ static void init_multi_rot(struct hashcontext *ctx,
 			   struct multi_rot *c,
 			   uint n_candidates)
 {
-	uint i, j;
+	uint i;
+	uint64_t j, attempts;
 	uint collisions, best_collisions = UINT_MAX;
 	uint64_t collisions2, best_collisions2 = 0;
 	uint64_t best_param = 0;
@@ -364,10 +365,8 @@ static void init_multi_rot(struct hashcontext *ctx,
 		best_error = calc_best_error(ctx, i);
 		best_param = 0;
 		best_collisions2 = UINT64_MAX;
-		uint attempts = MIN(((uint64_t)n_candidates *
-				     original_n_strings / ctx->n),
-				    UINT_MAX);
-		printf("making %u attempts\n", attempts);
+		attempts = (uint64_t)n_candidates * original_n_strings / ctx->n;
+		printf("making %lu attempts\n", attempts);
 
 		for (j = 0; j < attempts; j++) {
 			params[i] = next_param(ctx->rng, j, params, i);
@@ -379,12 +378,12 @@ static void init_multi_rot(struct hashcontext *ctx,
 			if (collisions2 < best_collisions2) {
 				best_collisions2 = collisions2;
 				best_param = params[i];
-				printf("new best at %d: "
+				printf("new best at %lu: "
 				       "err %lu > %lu; diff %lu\n",
 				       j, collisions2, best_error,
 				       collisions2 - best_error);
 				if (collisions2 == best_error) {
-					printf("found good candidate after %d\n", j);
+					printf("found good candidate after %lu\n", j);
 					collisions = test_params_running(ctx,
 									 params,
 									 i + 1,
@@ -405,9 +404,8 @@ static void init_multi_rot(struct hashcontext *ctx,
 
 	best_param = 0;
 	/* try extra hard for the last round */
-	uint attempts = MIN(((uint64_t)n_candidates * original_n_strings / ctx->n),
-			    UINT_MAX);
-	printf("making %u last round attempts\n", attempts);
+	attempts = (uint64_t)n_candidates * original_n_strings / ctx->n;
+	printf("making %lu last round attempts\n", attempts);
 
 	START_TIMER(last);
 
@@ -420,10 +418,10 @@ static void init_multi_rot(struct hashcontext *ctx,
 		if (collisions < best_collisions) {
 			best_collisions = collisions;
 			best_param = params[N_PARAMS - 1];
-			printf("new final round best at %d: collisions %u\n",
+			printf("new final round best at %lu: collisions %u\n",
 			       j, collisions);
 			if (collisions == 0) {
-				printf("found a winner after %d\n", j);
+				printf("found a winner after %lu\n", j);
 				break;
 			}
 		}
