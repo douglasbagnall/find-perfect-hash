@@ -281,11 +281,6 @@ static uint64_t test_params_with_l2_running(struct hashcontext *ctx,
 #endif
 		uint16_t h = hits[hash];
 		c2 += h;
-#if 0
-		if (c2 >= best_c2) {
-			break;
-		}
-#endif
 		hits[hash] = h + 1;
 	}
 	memset(hits, 0, (hash_mask + 1) * sizeof(hits[0]));
