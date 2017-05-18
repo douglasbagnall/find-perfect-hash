@@ -104,12 +104,12 @@ static bool check_raw_hash(struct hashcontext *ctx)
 
 #if 1
 #define MR_ROT(x) ((x) & (uint64_t)63)
-#define MR_MUL(x) ((x) >> 6)
+#define MR_MUL(x) (((x) >> 5) | 1)
 #define MR_ROT_STEP 1
 #define MR_ROT_MASK 63UL
 #else
 #define MR_ROT(x) ((x) >> 58UL)
-#define MR_MUL(x) (x)
+#define MR_MUL(x) (((x) << 1) | 1)
 #define MR_ROT_STEP (1ULL << 58)
 #define MR_ROT_MASK (63UL << 58)
 #endif
@@ -127,8 +127,6 @@ static inline uint32_t hash_component(uint64_t *params, uint i, uint64_t x)
 	uint32_t mask = MR_MASK(i);
 	x *= mul;
 	x >>= rot;
-	//x = ROTATE(x, rot);
-
 	return x & mask;
 }
 
