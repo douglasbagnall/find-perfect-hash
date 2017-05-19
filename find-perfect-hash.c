@@ -266,10 +266,10 @@ static uint test_params_running(struct hashcontext *ctx,
 	return collisions;
 }
 
-
 static uint64_t test_params_with_l2_running(struct hashcontext *ctx,
 					    uint64_t *params, uint n,
-					    uint64_t best_c2)
+					    uint64_t best_c2,
+					    uint16_t max_h)
 {
 	int j;
 	uint32_t hash_mask = (1 << ctx->bits) - 1;
@@ -279,6 +279,8 @@ static uint64_t test_params_with_l2_running(struct hashcontext *ctx,
 	uint64_t rot = MR_ROT(param);
 	uint64_t mul = MR_MUL(param);
 	uint32_t mask = MR_MASK(n - 1);
+	uint16_t worst = 0;
+
 	for (j = 0; j < ctx->n; j++) {
 		uint32_t comp = MR_COMPONENT(ctx->data[j].raw_hash,
 					     mul, rot, mask);
@@ -288,19 +290,40 @@ static uint64_t test_params_with_l2_running(struct hashcontext *ctx,
 #endif
 		uint16_t h = hits[hash];
 		c2 += h;
-		hits[hash] = h + 1;
+		h++;
+		worst = MAX(h, worst);
+		hits[hash] = h;
+#if 0
+
+		if ((j & 255) == 0) {
+			if (worst > max_h) {
+				c2 = best_c2 + 1;
+				break;
+			}
+
+			if (c2 >= best_c2) {
+				//printf("early exit after %d\n", j);
+				break;
+			}
+		}
+#endif
 	}
+	/* XX nuanced early exit -- do say quarters and have thresholds based
+	   on statistics */
+
 	memset(hits, 0, (hash_mask + 1) * sizeof(hits[0]));
-	return c2;
+	uint64_t w = worst;
+	return c2 + w * w * w;
 }
 
 
-static void remove_non_colliding_strings(struct hashcontext *ctx,
+static uint remove_non_colliding_strings(struct hashcontext *ctx,
 					 uint64_t *params, uint n)
 {
 	int j, k;
 	uint32_t hash_mask = (1 << ctx->bits) - 1;
 	uint16_t *hits = ctx->hits;
+	uint worst = 0;
 	/* hash once for the counts */
 	for (j = 0; j < ctx->n; j++) {
 		uint32_t hash = running_unmasked_hash(ctx->data[j].raw_hash,
@@ -312,6 +335,7 @@ static void remove_non_colliding_strings(struct hashcontext *ctx,
 	}
 	/* hash again to find the unique ones */
 	k = 0;
+	worst = 0;
 	for (j = 0; j < ctx->n; j++) {
 		uint32_t hash = running_unmasked_hash(ctx->data[j].raw_hash,
 						      ctx->data[j].running_hash,
@@ -320,34 +344,48 @@ static void remove_non_colliding_strings(struct hashcontext *ctx,
 		if (hits[hash] != 1) {
 			ctx->data[k] = ctx->data[j];
 			k++;
+			worst = MAX(worst, hits[hash]);
+			printf("hits[%u]: %u\n", hash, hits[hash]);
 		}
 	}
 
 	ctx->n = k;
-	printf("after %d params dropped %u unique strings, leaving %u\n",
-	       n, j - k, k);
+	printf("after %d params (%d bits) dropped %u unique strings, leaving %u\n",
+	       n, n + BASE_N - 1, j - k, k);
+	printf("worst is %u\n", worst);
+
+	if (worst > 1 << (ctx->bits - n - BASE_N)) {
+		printf("the situation is hopeless\n");
+	}
 
 	memset(hits, 0, (1 << ctx->bits) * sizeof(hits[0]));
+	return worst;
 }
 
 
-static uint64_t calc_best_error(struct hashcontext *ctx, uint n_params)
+static uint64_t calc_best_error(struct hashcontext *ctx, uint n_params,
+				uint16_t *max_h)
 {
 	uint n_bits = BASE_N + n_params * BITS_PER_PARAM;
 	uint n = 1 << n_bits;
 	uint q = ctx->n / n;
 	uint r = ctx->n % n;
+	uint min_h = q + (r ? 1 : 0);
+	uint mh = 1 << (ctx->bits - n_params - BASE_N);
+	printf("max_h %u min_h %u\n", mh, min_h);
+	*max_h = mh;
 	uint64_t sum = q * (n * (q - 1) + 2 * r) / 2;
-	return sum;
+	return sum + min_h * min_h * min_h;
 }
 
 static inline uint64_t next_param(struct rng *rng, uint64_t round,
 				  uint64_t *params, uint n_params)
 {
-	uint64_t p;
+	uint64_t p, rot;
 	do {
 		p = rand64(rng);
-	} while (MR_ROT(p) > 63 - n_params);
+		rot = MR_ROT(p);
+	} while (rot > 63 - n_params || rot < 8);
 	return p;
 }
 
@@ -364,12 +402,12 @@ static void init_multi_rot(struct hashcontext *ctx,
 	uint64_t best_error;
 	uint64_t original_n_strings = ctx->n;
 	uint64_t *params = c->params;
-
+	uint16_t max_h;
 	update_running_hash(ctx, params, 0);
 
 	for (i = 0; i < N_PARAMS - 1; i++) {
 		START_TIMER(l2);
-		best_error = calc_best_error(ctx, i);
+		best_error = calc_best_error(ctx, i, &max_h);
 		best_param = 0;
 		best_collisions2 = UINT64_MAX;
 		attempts = (uint64_t)n_candidates * original_n_strings / ctx->n;
@@ -381,7 +419,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 				ctx,
 				params,
 				i + 1,
-				best_collisions2);
+				best_collisions2, max_h);
 			if (collisions2 < best_collisions2) {
 				best_collisions2 = collisions2;
 				best_param = params[i];
