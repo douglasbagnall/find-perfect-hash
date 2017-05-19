@@ -114,10 +114,12 @@ static bool check_raw_hash(struct hashcontext *ctx)
 #define MR_ROT_MASK (63UL << 58)
 #endif
 
-#define MR_MASK(i) ((i == 0) ?						\
+#define MR_MASK(i) (((i) == 0) ?					\
 		    (1 << BASE_N) - 1 :					\
-		    ((1 << BITS_PER_PARAM) - 1) << (BASE_N + (i - 1) * BITS_PER_PARAM))
+		    ((1 << BITS_PER_PARAM) - 1) << (BASE_N + ((i) - 1) * BITS_PER_PARAM))
 
+
+#define MR_COMPONENT(x, mul, rot, mask)(((x * mul) >> rot) & mask)
 
 static inline uint32_t hash_component(uint64_t *params, uint i, uint64_t x)
 {
@@ -125,9 +127,7 @@ static inline uint32_t hash_component(uint64_t *params, uint i, uint64_t x)
 	uint64_t rot = MR_ROT(param);
 	uint64_t mul = MR_MUL(param);
 	uint32_t mask = MR_MASK(i);
-	x *= mul;
-	x >>= rot;
-	return x & mask;
+	return MR_COMPONENT(x, mul, rot, mask);
 }
 
 static inline uint32_t unmasked_hash(uint64_t raw_hash,
@@ -241,9 +241,14 @@ static uint test_params_running(struct hashcontext *ctx,
 	uint64_t *hits = (uint64_t *)ctx->hits;
 	uint32_t hash_mask = (1 << ctx->bits) - 1;
 	uint32_t hash;
+	uint64_t param = params[n - 1];
+	uint64_t rot = MR_ROT(param);
+	uint64_t mul = MR_MUL(param);
+	uint32_t mask = MR_MASK(n - 1);
+
 	for (j = 0; j < ctx->n; j++) {
-		uint32_t comp = hash_component(params, n - 1,
-					       ctx->data[j].raw_hash);
+		uint32_t comp = MR_COMPONENT(ctx->data[j].raw_hash,
+					     mul, rot, mask);
 
 		hash = (ctx->data[j].running_hash ^ comp);
 #if BITS_PER_PARAM > 1
@@ -270,9 +275,13 @@ static uint64_t test_params_with_l2_running(struct hashcontext *ctx,
 	uint32_t hash_mask = (1 << ctx->bits) - 1;
 	uint16_t *hits = ctx->hits;
 	uint64_t c2 = 0;
+	uint64_t param = params[n - 1];
+	uint64_t rot = MR_ROT(param);
+	uint64_t mul = MR_MUL(param);
+	uint32_t mask = MR_MASK(n - 1);
 	for (j = 0; j < ctx->n; j++) {
-		uint32_t comp = hash_component(params, n - 1,
-					       ctx->data[j].raw_hash);
+		uint32_t comp = MR_COMPONENT(ctx->data[j].raw_hash,
+					     mul, rot, mask);
 		uint32_t hash = ctx->data[j].running_hash ^ comp;
 #if BITS_PER_PARAM > 1
 		hash &= hash_mask;
@@ -376,8 +385,9 @@ static void init_multi_rot(struct hashcontext *ctx,
 			if (collisions2 < best_collisions2) {
 				best_collisions2 = collisions2;
 				best_param = params[i];
-				printf("new best at %lu: "
+				printf("new best %15lx »%-2lu at %lu: "
 				       "err %lu > %lu; diff %lu\n",
+				       MR_MUL(best_param), MR_ROT(best_param),
 				       j, collisions2, best_error,
 				       collisions2 - best_error);
 				if (collisions2 == best_error) {
@@ -416,7 +426,8 @@ static void init_multi_rot(struct hashcontext *ctx,
 		if (collisions < best_collisions) {
 			best_collisions = collisions;
 			best_param = params[N_PARAMS - 1];
-			printf("new final round best at %lu: collisions %u\n",
+			printf("new final round best %15lx »%-2lu at %lu: collisions %u\n",
+			       MR_MUL(best_param), MR_ROT(best_param),
 			       j, collisions);
 			if (collisions == 0) {
 				printf("found a winner after %lu\n", j);
