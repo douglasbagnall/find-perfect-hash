@@ -267,12 +267,9 @@ static uint test_params_running(struct hashcontext *ctx,
 }
 
 static uint64_t test_params_with_l2_running(struct hashcontext *ctx,
-					    uint64_t *params, uint n,
-					    uint64_t best_c2,
-					    uint16_t max_h)
+					    uint64_t *params, uint n)
 {
 	int j;
-	uint32_t hash_mask = (1 << ctx->bits) - 1;
 	uint16_t *hits = ctx->hits;
 	uint64_t c2 = 0;
 	uint64_t param = params[n - 1];
@@ -280,40 +277,28 @@ static uint64_t test_params_with_l2_running(struct hashcontext *ctx,
 	uint64_t mul = MR_MUL(param);
 	uint32_t mask = MR_MASK(n - 1);
 	uint16_t worst = 0;
+	uint n_bits = n + BASE_N - 1;
 
 	for (j = 0; j < ctx->n; j++) {
 		uint32_t comp = MR_COMPONENT(ctx->data[j].raw_hash,
 					     mul, rot, mask);
 		uint32_t hash = ctx->data[j].running_hash ^ comp;
 #if BITS_PER_PARAM > 1
-		hash &= hash_mask;
+		hash &= (1 << ctx->bits) - 1;
 #endif
 		uint16_t h = hits[hash];
 		c2 += h;
 		h++;
 		worst = MAX(h, worst);
 		hits[hash] = h;
-#if 0
 
-		if ((j & 255) == 0) {
-			if (worst > max_h) {
-				c2 = best_c2 + 1;
-				break;
-			}
-
-			if (c2 >= best_c2) {
-				//printf("early exit after %d\n", j);
-				break;
-			}
-		}
-#endif
 	}
-	/* XX nuanced early exit -- do say quarters and have thresholds based
-	   on statistics */
-
-	memset(hits, 0, (hash_mask + 1) * sizeof(hits[0]));
 	uint64_t w = worst;
-	return c2 + w * w * w;
+	uint64_t score = c2 + w * w * w;
+
+	memset(hits, 0, (1 << n_bits) * sizeof(hits[0]));
+
+	return score;
 }
 
 
@@ -418,8 +403,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 			collisions2 = test_params_with_l2_running(
 				ctx,
 				params,
-				i + 1,
-				best_collisions2, max_h);
+				i + 1);
 			if (collisions2 < best_collisions2) {
 				best_collisions2 = collisions2;
 				best_param = params[i];
