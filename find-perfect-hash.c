@@ -346,8 +346,7 @@ static uint remove_non_colliding_strings(struct hashcontext *ctx,
 }
 
 
-static uint64_t calc_best_error(struct hashcontext *ctx, uint n_params,
-				uint16_t *max_h)
+static uint64_t calc_best_error(struct hashcontext *ctx, uint n_params)
 {
 	uint n_bits = BASE_N + n_params * BITS_PER_PARAM;
 	uint n = 1 << n_bits;
@@ -355,8 +354,8 @@ static uint64_t calc_best_error(struct hashcontext *ctx, uint n_params,
 	uint r = ctx->n % n;
 	uint min_h = q + (r ? 1 : 0);
 	uint mh = 1 << (ctx->bits - n_params - BASE_N);
-	printf("max_h %u min_h %u\n", mh, min_h);
-	*max_h = mh;
+	printf("worst scores: max allowable %u; best conceivable %u\n",
+	       mh, min_h);
 	uint64_t sum = q * (n * (q - 1) + 2 * r) / 2;
 	return sum + min_h * min_h * min_h;
 }
@@ -391,12 +390,11 @@ static void init_multi_rot(struct hashcontext *ctx,
 	uint64_t best_error;
 	uint64_t original_n_strings = ctx->n;
 	uint64_t *params = c->params;
-	uint16_t max_h;
 	update_running_hash(ctx, params, 0);
 
 	for (i = 0; i < N_PARAMS - 1; i++) {
 		START_TIMER(l2);
-		best_error = calc_best_error(ctx, i, &max_h);
+		best_error = calc_best_error(ctx, i);
 		best_param = 0;
 		best_collisions2 = UINT64_MAX;
 		attempts = (uint64_t)n_candidates * original_n_strings / ctx->n;
