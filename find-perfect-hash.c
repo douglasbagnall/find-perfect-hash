@@ -345,7 +345,6 @@ static uint remove_non_colliding_strings(struct hashcontext *ctx,
 	return worst;
 }
 
-
 static uint64_t calc_best_error(struct hashcontext *ctx, uint n_params)
 {
 	uint n_bits = BASE_N + n_params * BITS_PER_PARAM;
@@ -371,9 +370,64 @@ static inline uint64_t next_param(struct rng *rng, uint64_t round,
 	return p;
 }
 
+
 struct hash_pair {
 	uint32_t a;
 	uint32_t b;
+};
+
+static uint find_unresolved_pairs(struct hashcontext *ctx,
+				  uint64_t *params, uint n,
+				  struct hash_pair **dest)
+{
+	uint32_t hash_mask = (1 << ctx->bits) - 1;
+	struct hash_pair *pairs = calloc(1 << ctx->bits, sizeof(pairs[0]));
+	uint i, j;
+	uint n_pairs = 0;
+	for (j = 0; j < ctx->n; j++) {
+		uint32_t hash = unmasked_hash(ctx->data[j].raw_hash,
+					      params, n);
+		hash &= hash_mask;
+		struct hash_pair *p = &pairs[hash];
+		if (p->a == 0) {
+			p->a = ctx->data[j].raw_hash;
+		} else if (p->b == 0) {
+			p->b = ctx->data[j].raw_hash;
+			n_pairs++;
+		} else {
+			printf("more than two collisions for hash %x\n",
+			       hash);
+			*dest = NULL;
+			return 0;
+		}
+	}
+	/* shift all the pairs to the beginning */
+	i = 0;
+	for (j = 0; j < hash_mask + 1; j++) {
+		if (pairs[j].b == 0) {
+			continue;
+		}
+		pairs[i] = pairs[j];
+		i++;
+	}
+	*dest = pairs;
+	return i;
+}
+
+
+static bool test_pair(uint64_t param,
+		      struct hash_pair pair,
+		      uint n)
+{
+	uint64_t rot = MR_ROT(param);
+	uint64_t mul = MR_MUL(param);
+	uint32_t mask = MR_MASK(n - 1);
+
+	uint32_t a = MR_COMPONENT(pair.a,
+				  mul, rot, mask);
+	uint32_t b = MR_COMPONENT(pair.b,
+				  mul, rot, mask);
+	return a != b;
 }
 
 
@@ -436,38 +490,55 @@ static void init_multi_rot(struct hashcontext *ctx,
 
 	best_param = 0;
 	/* try extra hard for the last round */
-	attempts = (uint64_t)n_candidates * original_n_strings / ctx->n;
 	if (worst > 2) {
-		printf("the situation is hopeless, but trying anyway\n");
-	} else {
-		attempts *= 3;
-		printf("a solution is possible (tripling effort)\n");
+		printf("the situation is hopeless. stopping\n");
+		goto done;
 	}
+
+	struct hash_pair *pairs;
+	uint n_pairs = find_unresolved_pairs(ctx, params, N_PARAMS - 1,
+					     &pairs);
+
+	printf("There are %u unresolved pairs\n", n_pairs);
+
+	attempts = (uint64_t)n_candidates * original_n_strings / ctx->n * 100;
 
 	printf("making %lu last round attempts\n", attempts);
 
 	START_TIMER(last);
 
+	uint best_run = 0;
+
 	for (j = 0; j < attempts; j++) {
-		params[N_PARAMS - 1] = next_param(ctx->rng, j, params, N_PARAMS);
-		collisions = test_params_running(ctx,
-						 params,
-						 N_PARAMS,
-						 best_collisions);
-		if (collisions < best_collisions) {
-			best_collisions = collisions;
-			best_param = params[N_PARAMS - 1];
-			printf("new final round best %15lx »%-2lu at %lu: collisions %u\n",
-			       MR_MUL(best_param), MR_ROT(best_param),
-			       j, collisions);
-			if (collisions == 0) {
-				printf("found a winner after %lu\n", j);
-				break;
+		/* we don't need to calculate the full hash */
+		uint64_t p = next_param(ctx->rng, j, params, N_PARAMS);
+
+		for (i = 0; i < n_pairs; i++) {
+			if (test_pair(p, pairs[i], N_PARAMS)) {
+				continue;
 			}
+			if (i > best_run) {
+				best_param = p;
+				best_run = i;
+				printf("new best run %15lx »%-2lu at %lu: %u pairs\n",
+				       MR_MUL(p), MR_ROT(p), j, i);
+			}
+			break;
+		}
+		if (i == n_pairs) {
+			best_param = p;
+			best_run = i;
+			printf("WINNING run %15lx »%-2lu at %lu\n",
+			       MR_MUL(p), MR_ROT(p), j);
+			break;
 		}
 	}
 	params[N_PARAMS - 1] = best_param;
 	PRINT_TIMER(last);
+
+	best_collisions = test_params_running(ctx, params, N_PARAMS,
+					      best_collisions);
+
 
   done:
 	c->collisions = best_collisions;
