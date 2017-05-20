@@ -501,36 +501,28 @@ static void init_multi_rot(struct hashcontext *ctx,
 
 	printf("There are %u unresolved pairs\n", n_pairs);
 
-	attempts = (uint64_t)n_candidates * original_n_strings / ctx->n * 100;
+	attempts = (uint64_t)n_candidates * original_n_strings / ctx->n * 3;
 
 	printf("making %lu last round attempts\n", attempts);
 
 	START_TIMER(last);
 
-	uint best_run = 0;
-
 	for (j = 0; j < attempts; j++) {
 		/* we don't need to calculate the full hash */
 		uint64_t p = next_param(ctx->rng, j, params, N_PARAMS);
-
+		collisions = 0;
 		for (i = 0; i < n_pairs; i++) {
-			if (test_pair(p, pairs[i], N_PARAMS)) {
-				continue;
-			}
-			if (i > best_run) {
-				best_param = p;
-				best_run = i;
-				printf("new best run %15lx »%-2lu at %lu: %u pairs\n",
-				       MR_MUL(p), MR_ROT(p), j, i);
-			}
-			break;
+			collisions += (test_pair(p, pairs[i], N_PARAMS) == false);
 		}
-		if (i == n_pairs) {
+		if (collisions < best_collisions) {
+			best_collisions = collisions;
 			best_param = p;
-			best_run = i;
-			printf("WINNING run %15lx »%-2lu at %lu\n",
-			       MR_MUL(p), MR_ROT(p), j);
-			break;
+			printf("new final round best %15lx »%-2lu at %lu: collisions %u\n",
+			       MR_MUL(p), MR_ROT(p), j, collisions);
+			if (collisions == 0) {
+				printf("found a winner after %lu\n", j);
+				break;
+			}
 		}
 	}
 	params[N_PARAMS - 1] = best_param;
