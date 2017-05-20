@@ -415,9 +415,9 @@ static uint find_unresolved_pairs(struct hashcontext *ctx,
 }
 
 
-static bool test_pair(uint64_t param,
-		      struct hash_pair pair,
-		      uint n)
+static inline bool test_pair(uint64_t param,
+			     struct hash_pair pair,
+			     uint n)
 {
 	uint64_t rot = MR_ROT(param);
 	uint64_t mul = MR_MUL(param);
@@ -428,6 +428,30 @@ static bool test_pair(uint64_t param,
 	uint32_t b = MR_COMPONENT(pair.b,
 				  mul, rot, mask);
 	return a != b;
+}
+
+
+static uint test_all_pairs(uint64_t param,
+			   struct hash_pair *pairs,
+			   uint n_pairs,
+			   uint n_params)
+{
+	uint i;
+	uint collisions = 0;
+	for (i = 0; i < n_pairs; i++) {
+		collisions += ! test_pair(param, pairs[i], n_params);
+	}
+	return collisions;
+}
+
+static inline uint64_t test_pair_all_rot(uint64_t param,
+					 struct hash_pair pair,
+					 uint n)
+{
+	uint64_t mul = MR_MUL(param);
+	uint64_t all_a = pair.a * mul;
+	uint64_t all_b = pair.b * mul;
+	return all_a ^ all_b;
 }
 
 
@@ -503,46 +527,62 @@ static void init_multi_rot(struct hashcontext *ctx,
 	attempts = (uint64_t)n_candidates * original_n_strings / ctx->n * 3;
 
 	START_TIMER(last);
-	
-	if (n_pairs > 64 &&
-	    (1UL << n_pairs) < attempts * 100) {
+
+	if (n_pairs < 64 &&
+	    (1UL << n_pairs) < attempts * 6400UL) {
 		uint64_t exact_attempts = attempts * 100;
 		uint best_run = 0;
-		printf("trying for exact solution with %lu attempts\n",
+		printf("trying for exact solution with %lu attempts (64 way parallel)\n",
 		       exact_attempts);
 
+		/* Test all rotations at once:
+
+		   XOR the two multiplies.
+		   anti-collisions are 1s.
+		   AND the anti-collisions of pairs.
+		   if there is a one bit, that rotation is good.
+		 */
 		for (j = 0; j < exact_attempts; j++) {
 			/* we don't need to calculate the full hash */
 			uint64_t p = next_param(ctx->rng, j, params, N_PARAMS);
-
+			uint64_t non_collisions = (uint64_t)-1ULL;
 			for (i = 0; i < n_pairs; i++) {
-				if (test_pair(p, pairs[i], N_PARAMS)) {
+				uint64_t rot_map = test_pair_all_rot(p, pairs[i], N_PARAMS);
+
+				non_collisions &= rot_map;
+				if (non_collisions) {
 					continue;
 				}
 				if (i > best_run) {
 					best_param = p;
 					best_run = i;
-					printf("new best run %15lx »%-2lu "
+					printf("new best run %15lx  "
 					       "at %lu: %u pairs\n",
-					       MR_MUL(p), MR_ROT(p), j, i);
+					       MR_MUL(p), j, i);
 				}
 				break;
 			}
 			if (i == n_pairs) {
-				best_param = p;
-				best_run = i;
-				printf("WINNING run %15lx »%-2lu at %lu\n",
-				       MR_MUL(p), MR_ROT(p), j);
-				break;
+				/* we know there is a rotate that works with
+				   this multiplier */
+				p &= ~MR_ROT_MASK;
+				for (i = 0; i < 64; i++) {
+					collisions = test_all_pairs(p, pairs, n_pairs,
+								    N_PARAMS);
+
+					if (collisions == 0) {
+						best_param = p;
+						printf("WINNING run %15lx »%-2lu at %lu\n",
+						       MR_MUL(p), MR_ROT(p), j);
+						goto win;
+					}
+					p += MR_ROT_STEP;
+				}
+				printf("we thought we has a winning param, but no!"
+				       "%15lx »?? at %lu\n",
+				       MR_MUL(p), j);
 			}
 		}
-		best_collisions = test_params_running(ctx,
-						      params,
-						      N_PARAMS,
-						      best_collisions);
-		if (best_collisions == 0) {
-			goto done;
-		}		
 	}
 	printf("trying for an inexact solution with %lu attempts\n",
 	       attempts);
@@ -550,10 +590,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 	for (j = 0; j < attempts; j++) {
 		/* we don't need to calculate the full hash */
 		uint64_t p = next_param(ctx->rng, j, params, N_PARAMS);
-		collisions = 0;
-		for (i = 0; i < n_pairs; i++) {
-			collisions += (test_pair(p, pairs[i], N_PARAMS) == false);
-		}
+		collisions = test_all_pairs(p, pairs, n_pairs, N_PARAMS);
 		if (collisions < best_collisions) {
 			best_collisions = collisions;
 			best_param = p;
@@ -565,12 +602,11 @@ static void init_multi_rot(struct hashcontext *ctx,
 			}
 		}
 	}
+  win:
 	params[N_PARAMS - 1] = best_param;
 	PRINT_TIMER(last);
-
 	best_collisions = test_params_running(ctx, params, N_PARAMS,
 					      best_collisions);
-
 
   done:
 	c->collisions = best_collisions;
