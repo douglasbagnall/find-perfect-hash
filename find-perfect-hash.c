@@ -309,37 +309,35 @@ static uint remove_non_colliding_strings(struct hashcontext *ctx,
 	uint32_t hash_mask = (1 << ctx->bits) - 1;
 	uint16_t *hits = ctx->hits;
 	uint worst = 0;
+	uint best = UINT_MAX;
 	/* hash once for the counts */
 	for (j = 0; j < ctx->n; j++) {
-		uint32_t hash = running_unmasked_hash(ctx->data[j].raw_hash,
-						      ctx->data[j].running_hash,
-						      params, n);
+		uint32_t hash = unmasked_hash(ctx->data[j].raw_hash,
+					      params, n);
 		hash &= hash_mask;
-		//printf("hash %u mask %u hits %p\n", hash, hash_mask, ctx->hits);
 		hits[hash]++;
 	}
 	/* hash again to find the unique ones */
 	k = 0;
-	worst = 0;
 	for (j = 0; j < ctx->n; j++) {
-		uint32_t hash = running_unmasked_hash(ctx->data[j].raw_hash,
-						      ctx->data[j].running_hash,
-						      params, n);
+		uint32_t hash = unmasked_hash(ctx->data[j].raw_hash,
+					      params, n);
 		hash &= hash_mask;
 		if (hits[hash] != 1) {
 			ctx->data[k] = ctx->data[j];
 			k++;
 			worst = MAX(worst, hits[hash]);
-			printf("hits[%u]: %u\n", hash, hits[hash]);
+			best = MIN(best, hits[hash]);
 		}
 	}
 
 	ctx->n = k;
+	uint n_bits = n + BASE_N - 1;
 	printf("after %d params (%d bits) dropped %u unique strings, leaving %u\n",
-	       n, n + BASE_N - 1, j - k, k);
-	printf("worst is %u\n", worst);
+	       n, n_bits, j - k, k);
+	printf("worst is %u; best is %u\n", worst, best);
 
-	if (worst > 1 << (ctx->bits - n - BASE_N)) {
+	if (worst > 1 << (ctx->bits - n_bits)) {
 		printf("the situation is hopeless\n");
 	}
 
@@ -370,8 +368,13 @@ static inline uint64_t next_param(struct rng *rng, uint64_t round,
 	do {
 		p = rand64(rng);
 		rot = MR_ROT(p);
-	} while (rot > 63 - n_params || rot < 8);
+	} while (rot > 63 - n_params || rot < 5);
 	return p;
+}
+
+struct hash_pair {
+	uint32_t a;
+	uint32_t b;
 }
 
 
@@ -380,6 +383,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 			   uint n_candidates)
 {
 	uint i;
+	uint worst = 0;
 	uint64_t j, attempts;
 	uint collisions, best_collisions = UINT_MAX;
 	uint64_t collisions2, best_collisions2 = 0;
@@ -428,13 +432,20 @@ static void init_multi_rot(struct hashcontext *ctx,
 		}
 		params[i] = best_param;
 		update_running_hash(ctx, params, i + 1);
-		remove_non_colliding_strings(ctx, params, i + 1);
+		worst = remove_non_colliding_strings(ctx, params, i + 1);
 		PRINT_TIMER(l2);
 	}
 
 	best_param = 0;
 	/* try extra hard for the last round */
 	attempts = (uint64_t)n_candidates * original_n_strings / ctx->n;
+	if (worst > 2) {
+		printf("the situation is hopeless, but trying anyway\n");
+	} else {
+		attempts *= 3;
+		printf("a solution is possible (tripling effort)\n");
+	}
+
 	printf("making %lu last round attempts\n", attempts);
 
 	START_TIMER(last);
