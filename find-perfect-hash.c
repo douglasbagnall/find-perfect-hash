@@ -500,12 +500,52 @@ static void init_multi_rot(struct hashcontext *ctx,
 					     &pairs);
 
 	printf("There are %u unresolved pairs\n", n_pairs);
-
 	attempts = (uint64_t)n_candidates * original_n_strings / ctx->n * 3;
 
-	printf("making %lu last round attempts\n", attempts);
-
 	START_TIMER(last);
+	
+	if (n_pairs > 64 &&
+	    (1UL << n_pairs) < attempts * 100) {
+		uint64_t exact_attempts = attempts * 100;
+		uint best_run = 0;
+		printf("trying for exact solution with %lu attempts\n",
+		       exact_attempts);
+
+		for (j = 0; j < exact_attempts; j++) {
+			/* we don't need to calculate the full hash */
+			uint64_t p = next_param(ctx->rng, j, params, N_PARAMS);
+
+			for (i = 0; i < n_pairs; i++) {
+				if (test_pair(p, pairs[i], N_PARAMS)) {
+					continue;
+				}
+				if (i > best_run) {
+					best_param = p;
+					best_run = i;
+					printf("new best run %15lx »%-2lu "
+					       "at %lu: %u pairs\n",
+					       MR_MUL(p), MR_ROT(p), j, i);
+				}
+				break;
+			}
+			if (i == n_pairs) {
+				best_param = p;
+				best_run = i;
+				printf("WINNING run %15lx »%-2lu at %lu\n",
+				       MR_MUL(p), MR_ROT(p), j);
+				break;
+			}
+		}
+		best_collisions = test_params_running(ctx,
+						      params,
+						      N_PARAMS,
+						      best_collisions);
+		if (best_collisions == 0) {
+			goto done;
+		}		
+	}
+	printf("trying for an inexact solution with %lu attempts\n",
+	       attempts);
 
 	for (j = 0; j < attempts; j++) {
 		/* we don't need to calculate the full hash */
