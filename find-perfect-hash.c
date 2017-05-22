@@ -2,8 +2,8 @@
 
 #define BITS_PER_PARAM 1
 #define BASE_N 4
-#define DETERMINISTIC 01
-
+#define DETERMINISTIC 0
+#define MAX_SMALL_TUPLE 20
 
 #include "find-perfect-hash-helpers.h"
 
@@ -27,6 +27,48 @@ struct multi_rot {
 	uint64_t *params;
 	uint collisions;
 };
+
+struct hash_big_tuple {
+	uint64_t array[MAX_SMALL_TUPLE];
+	uint n;
+};
+
+struct hash_fiver {
+	uint64_t a;
+	uint64_t b;
+	uint64_t c;
+	uint64_t d;
+	uint64_t e;
+};
+
+struct hash_quad {
+	uint64_t a;
+	uint64_t b;
+	uint64_t c;
+	uint64_t d;
+};
+
+struct hash_triple {
+	uint64_t a;
+	uint64_t b;
+	uint64_t c;
+};
+
+struct hash_pair {
+	uint64_t a;
+	uint64_t b;
+};
+
+struct hash_tuples {
+	struct hash_quad *quads;
+	uint n_quads;
+	struct hash_triple *triples;
+	uint n_triples;
+	struct hash_pair *pairs;
+	uint n_pairs;
+};
+
+
 
 uint N_PARAMS = 0;
 
@@ -371,10 +413,6 @@ static inline uint64_t next_param(struct rng *rng, uint64_t round,
 }
 
 
-struct hash_pair {
-	uint32_t a;
-	uint32_t b;
-};
 
 static uint find_unresolved_pairs(struct hashcontext *ctx,
 				  uint64_t *params, uint n,
@@ -395,7 +433,8 @@ static uint find_unresolved_pairs(struct hashcontext *ctx,
 			p->b = ctx->data[j].raw_hash;
 			n_pairs++;
 		} else {
-			printf("more than two collisions for hash %x\n",
+			printf("\033[01;31mmore than two collisions for hash %x"
+			       "\033[00m\n\n",
 			       hash);
 			*dest = NULL;
 			return 0;
@@ -455,76 +494,234 @@ static inline uint64_t test_pair_all_rot(uint64_t param,
 }
 
 
-static void init_multi_rot(struct hashcontext *ctx,
-			   struct multi_rot *c,
-			   uint n_candidates)
+static void find_unresolved_small_tuples(struct hashcontext *ctx,
+					 uint64_t *params, uint n,
+					 struct hash_tuples *dest)
 {
-	uint i;
-	uint worst = 0;
+	uint32_t hash_mask = (1 << ctx->bits) - 1;
+	uint n_bits = n + BASE_N - 1;
+	uint n_hashes = 1 << n_bits;
+	stuct hash_big_tuple *tuples = calloc(n_hashes, sizeof(tuples[0]));
+	uint j;
+	uint *sizes = calloc(n_hashes, sizeof(uint));
+	bool overflow = false;
+
+	for (j = 0; j < ctx->n; j++) {
+		uint32_t raw = ctx->data[j].raw_hash;
+		uint32_t hash = unmasked_hash(raw, params, n);
+		hash &= hash_mask;
+		struct hash_quad *p = &quads[hash];
+		if (p->n < MAX_SMALL_TUPLE) {
+			p->array[p->n] = raw;
+		} else {
+			overflow = true;
+			printf("\033[01;31mmore than %u collisions for hash %x"
+			       "\033[00m\n\n", p->n, hash);
+		}
+		p->n++;
+	}
+
+	struct hash_quad *quads = calloc(n_hashes, sizeof(quads[0]));
+	struct hash_triple *triples = calloc(n_hashes / 3 + 1, sizeof(triples[0]));
+	struct hash_pair *pairs = calloc(n_hashes / 2 + 1, sizeof(pairs[0]));
+	uint n_pairs = 0;
+	uint n_triples = 0;
+	uint n_quads = 0;
+
+
+
+	/* shift all the quads to the beginning, and put the pairs and triples
+	   in their own lists. */
+	for (j = 0; j < n_hashes; j++) {
+		if (quads[j].b == 0) {
+			continue; /* a singleton */
+		}
+		if (quads[j].d != 0) {
+			quads[n_quads] = quads[j];
+			n_quads++;
+			continue;
+		}
+		if (quads[j].c != 0) {
+			triples[n_triples].a = quads[j].a;
+			triples[n_triples].b = quads[j].b;
+			triples[n_triples].c = quads[j].c;
+			n_triples++;
+			continue;
+		}
+		pairs[n_pairs].a = quads[j].a;
+		pairs[n_pairs].b = quads[j].b;
+		n_pairs++;
+	}
+	dest->quads = quads;
+	dest->n_quads = n_quads;
+	dest->triples = triples;
+	dest->n_triples = n_triples;
+	dest->pairs = pairs;
+	dest->n_pairs = n_pairs;
+
+	printf("there are %u pairs, %u triples, and %u quads\n",
+	       n_pairs, n_triples, n_quads);
+}
+
+static uint do_penultimate_round(struct hashcontext *ctx,
+				 struct multi_rot *c,
+				 uint n_candidates)
+{
+	uint i, k;
 	uint64_t j, attempts;
 	uint collisions, best_collisions = UINT_MAX;
-	uint64_t collisions2, best_collisions2 = 0;
 	uint64_t best_param = 0;
-	uint64_t best_error;
 	uint64_t original_n_strings = ctx->n;
 	uint64_t *params = c->params;
-	update_running_hash(ctx, params, 0);
+	struct hash_tuples tuples;
+	uint n_bits = N_PARAMS + BASE_N - 3;
 
-	for (i = 0; i < N_PARAMS - 1; i++) {
-		START_TIMER(l2);
-		best_error = calc_best_error(ctx, i);
-		best_param = 0;
-		best_collisions2 = UINT64_MAX;
-		attempts = (uint64_t)n_candidates * original_n_strings / ctx->n;
-		printf("making %lu attempts\n", attempts);
+	find_unresolved_small_tuples(ctx, params, N_PARAMS - 2,
+				     &tuples);
 
-		for (j = 0; j < attempts; j++) {
-			params[i] = next_param(ctx->rng, j, params, i);
-			collisions2 = test_params_with_l2_running(
-				ctx,
-				params,
-				i + 1);
-			if (collisions2 < best_collisions2) {
-				best_collisions2 = collisions2;
-				best_param = params[i];
-				printf("new best %15lx »%-2lu at %lu: "
-				       "err %lu > %lu; diff %lu\n",
-				       MR_MUL(best_param), MR_ROT(best_param),
-				       j, collisions2, best_error,
-				       collisions2 - best_error);
-				if (collisions2 == best_error) {
-					printf("found good candidate after %lu\n", j);
-					collisions = test_params_running(ctx,
-									 params,
-									 i + 1,
-									 UINT_MAX);
+	attempts = (uint64_t)n_candidates * original_n_strings / ctx->n * 100;
+	printf("making %lu attempts\n", attempts);
+
+	START_TIMER(penultimate);
+
+	/* for 2:
+	     a ^ b -> 1 bit is non-collision.
+
+	   for 3:
+	     we need 1 collision out of the 3 possible. 6/8
+	     (a ^ b) -> ab == a is OK with b
+	     (a ^ c) -> ac
+	     (b ^ c) -> bc
+	     ~ab == a collides with b
+	     ~ab & ~ac == a collides with b AND with c == 3 way BAD
+
+	   for 4:
+	      we need 2 collisions out of the 4 possible. 6/16
+	      ab, ac, ad, bc, bd, cd  == x is OK with y
+
+	     ~ab & ~ac == a collides with b AND with c == 3 way BAD
+	     removes 4 -> 6/12
+	     ~bd & ~cd == d collides with b AND c
+	     removes 2 -> 6/10
+	     ~ad & ~bd == d collides with a AND b
+	     removes 2 -> 6/8
+	     ~ac & ~cd == c collides with a AND d
+	     removes 2 -> 6/6
+
+	     there is probably a faster way.
+
+	*/
+
+	//printf("non-collisions mask %lx\n", ~((1UL << n_bits) - 1));
+
+	for (j = 0; j < attempts; j++) {
+		/* we don't need to calculate the full hash */
+		uint64_t param = next_param(ctx->rng, j, params, N_PARAMS - 1);
+		/* we don't care about non-collisions to the right of this parameter */
+		uint64_t non_collisions = ~((1UL << n_bits) - 1);
+		uint64_t mul = MR_MUL(param);
+		param &= ~MR_ROT_MASK;
+		uint64_t a, b, c, d;
+		uint64_t ab, ac, ad, bd, cd, abcd;
+		/* first check the 4s then the 3s then count the 2s. */
+		for (i = 0; i < tuples.n_quads; i++) {
+			struct hash_quad q = tuples.quads[i];
+			a = q.a * mul;
+			b = q.b * mul;
+			c = q.c * mul;
+			d = q.d * mul;
+			ab = a ^ b;
+			ac = a ^ c;
+			ad = a ^ d;
+			//bc = b ^ c;
+			bd = b ^ d;
+			cd = c ^ d;
+			abcd = ((~ab & ~ac) &
+				(~bd & ~cd) &
+				(~ad & ~bd) &
+				(~ac & ~cd)); /* 1 bits mean collisions */
+			non_collisions &= ~abcd;
+		}
+		if (non_collisions == 0) {
+			/* no rotate of this mul works, try with another */
+			continue;
+		}
+		for (i = 0; i < tuples.n_triples; i++) {
+			struct hash_triple q = tuples.triples[i];
+			a = q.a * mul;
+			b = q.b * mul;
+			c = q.c * mul;
+			ab = a ^ b;
+			ac = a ^ c;
+			non_collisions &= (ab | ac);
+		}
+		if (non_collisions == 0) {
+			continue;
+		}
+		//printf("got past triples at %lu. non-collisions %016lx\n", j, non_collisions);
+		/* at this point we have met the mandatory criteria, and
+		   increased the number of pairs for the next round by
+		   2 * n_quads + 1 * n_triples.
+
+		   we want to reduce the number of pairs in this round as much
+		   as possible, so check the good rotates found in the
+		   quad/triple check for pair elimination */
+
+		non_collisions >>= n_bits;
+
+		for (k = 0; non_collisions; k++) {
+			if (non_collisions & 1) {
+				uint64_t p = param + k * MR_ROT_STEP;
+				collisions = test_all_pairs(p,
+							    tuples.pairs,
+							    tuples.n_pairs,
+							    N_PARAMS - 1);
+				if (collisions < best_collisions) {
+					best_collisions = collisions;
+					best_param = p;
+					printf("new penultimate best %15lx »%-2lu at %lu:"
+					       " collisions %u\n",
+					       MR_MUL(p), MR_ROT(p), j, collisions);
 					if (collisions == 0) {
-						printf("we seem to be finished in round %d!\n", i);
-						goto done;
+						goto win;
 					}
-					break;
 				}
 			}
+			non_collisions >>= 1;
 		}
-		params[i] = best_param;
-		update_running_hash(ctx, params, i + 1);
-		worst = remove_non_colliding_strings(ctx, params, i + 1);
-		PRINT_TIMER(l2);
 	}
+  win:
+	params[N_PARAMS - 2] = best_param;
+	PRINT_TIMER(penultimate);
+	best_collisions += 2 * tuples.n_quads + tuples.n_triples;
+	uint best_collisions2 = test_params_running(ctx, params, N_PARAMS,
+						    best_collisions);
+	printf("best collisions %u; recaluculated %u\n",
+	       best_collisions, best_collisions2);
 
-	best_param = 0;
-	/* try extra hard for the last round */
-	if (worst > 2) {
-		printf("the situation is hopeless. stopping\n");
-		goto done;
-	}
+	free(tuples.pairs);
+	free(tuples.triples);
+	free(tuples.quads);
+	return best_collisions;
+}
 
+
+static uint do_last_round(struct hashcontext *ctx,
+			  struct multi_rot *c,
+			  uint n_candidates)
+{
+	uint i;
+	uint64_t j, attempts;
+	uint collisions, best_collisions = UINT_MAX;
+	uint64_t best_param = 0;
+	uint64_t original_n_strings = ctx->n;
+	uint64_t *params = c->params;
 	struct hash_pair *pairs;
 	uint n_pairs = find_unresolved_pairs(ctx, params, N_PARAMS - 1,
 					     &pairs);
 
 	printf("There are %u unresolved pairs\n", n_pairs);
-	attempts = (uint64_t)n_candidates * original_n_strings / ctx->n * 3;
+	attempts = (uint64_t)n_candidates * original_n_strings / ctx->n * 10;
 
 	START_TIMER(last);
 
@@ -608,9 +805,81 @@ static void init_multi_rot(struct hashcontext *ctx,
 	best_collisions = test_params_running(ctx, params, N_PARAMS,
 					      best_collisions);
 
-  done:
-	c->collisions = best_collisions;
+
+	free(pairs);
+	return best_collisions;
+
 }
+
+
+
+static void init_multi_rot(struct hashcontext *ctx,
+			   struct multi_rot *c,
+			   uint n_candidates)
+{
+	uint i;
+	uint worst = 0;
+	uint64_t j, attempts;
+	uint collisions;
+	uint64_t collisions2, best_collisions2 = 0;
+	uint64_t best_param = 0;
+	uint64_t best_error;
+	uint64_t original_n_strings = ctx->n;
+	uint64_t *params = c->params;
+	update_running_hash(ctx, params, 0);
+
+	for (i = 0; i < N_PARAMS - 2; i++) {
+		START_TIMER(l2);
+		best_error = calc_best_error(ctx, i);
+		best_param = 0;
+		best_collisions2 = UINT64_MAX;
+		attempts = (uint64_t)n_candidates * original_n_strings / ctx->n;
+		printf("making %lu attempts\n", attempts);
+
+		for (j = 0; j < attempts; j++) {
+			params[i] = next_param(ctx->rng, j, params, i);
+			collisions2 = test_params_with_l2_running(
+				ctx,
+				params,
+				i + 1);
+			if (collisions2 < best_collisions2) {
+				best_collisions2 = collisions2;
+				best_param = params[i];
+				printf("new best %15lx »%-2lu at %lu: "
+				       "err %lu > %lu; diff %lu\n",
+				       MR_MUL(best_param), MR_ROT(best_param),
+				       j, collisions2, best_error,
+				       collisions2 - best_error);
+				if (collisions2 == best_error) {
+					printf("found good candidate after %lu\n", j);
+					collisions = test_params_running(ctx,
+									 params,
+									 i + 1,
+									 UINT_MAX);
+					if (collisions == 0) {
+						printf("we seem to be finished in round %d!\n", i);
+						goto done;
+					}
+					break;
+				}
+			}
+		}
+	  done:
+		params[i] = best_param;
+		update_running_hash(ctx, params, i + 1);
+		worst = remove_non_colliding_strings(ctx, params, i + 1);
+		PRINT_TIMER(l2);
+	}
+
+	/* try extra hard for the last two rounds */
+	if (worst > 4) {
+		printf("the situation is hopeless. stopping\n");
+		return;
+	}
+	do_penultimate_round(ctx, c, n_candidates);
+	c->collisions = do_last_round(ctx, c, n_candidates);
+}
+
 
 
 struct hashcontext *new_context(const char *filename, uint bits,
@@ -658,6 +927,7 @@ static int find_hash(const char *filename, uint bits,
 
 	struct multi_rot c;
 	c.params = calloc(N_PARAMS, sizeof(uint64_t));
+	c.collisions = UINT_MAX;
 	init_multi_rot(ctx, &c, n_candidates);
 
 	struct hashcontext *ctx2 = new_context(filename, bits,
