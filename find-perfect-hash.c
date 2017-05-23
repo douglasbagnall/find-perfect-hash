@@ -548,7 +548,9 @@ static uint do_squashing_round(struct hashcontext *ctx,
 		/* we don't need to calculate the full hash */
 		uint64_t param = next_param(ctx->rng, j, params, n + 1);
 		/* we don't care about non-collisions to the right of this parameter */
-		uint64_t non_collisions = ~((1UL << n_bits) - 1);
+		uint64_t inaccessible_shifts = (1UL << n_bits) - 1;
+		inaccessible_shifts |= inaccessible_shifts << (64 - n_bits);
+		uint64_t non_collisions = ~inaccessible_bits;
 		uint64_t mul = MR_MUL(param);
 		param &= ~MR_ROT_MASK;
 		uint64_t a, b, c, d;
