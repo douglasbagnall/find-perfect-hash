@@ -67,6 +67,21 @@ static inline uint32_t rand_range(struct rng *rng, uint32_t low, uint32_t high)
 }
 
 
+#define ALIGNMENT 32
+static inline __attribute__((__malloc__, __assume_aligned__(ALIGNMENT),
+        __returns_nonnull__)) void *
+malloc_aligned(size_t size) {
+	void *mem;
+	posix_memalign(&mem, ALIGNMENT, size);
+	return mem;
+}
+
+#ifndef __clang__
+#define ASSUME_ALIGNED(x)   (x) = __builtin_assume_aligned ((x), ALIGNMENT)
+#else
+#define ASSUME_ALIGNED(x) /* x */
+#endif
+
 static int __attribute__((unused))
 pgm_dump_double(const double *matrix, uint width, uint height,
 		const char *name, double min, double max)
