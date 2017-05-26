@@ -2,8 +2,8 @@
 
 #define BITS_PER_PARAM 1
 #define BASE_N 4
-#define DETERMINISTIC 0
-#define MAX_SMALL_TUPLE 16
+#define DETERMINISTIC 01
+#define MAX_SMALL_TUPLE 32
 
 #include "find-perfect-hash-helpers.h"
 
@@ -33,9 +33,9 @@ struct hash_big_tuple {
 	uint n;
 };
 
+/* tuple size is always known implicitly from without */
 struct tuple_list {
 	uint64_t *raw;
-	uint tuple_size;
 	uint n;
 };
 
@@ -135,6 +135,8 @@ static bool check_raw_hash(struct hashcontext *ctx)
 		    (1 << BASE_N) - 1 :					\
 		    ((1 << BITS_PER_PARAM) - 1) << (BASE_N + ((i) - 1) * BITS_PER_PARAM))
 
+#define MR_MASK_SHIFT(i) (BASE_N + (((i) == 0) ?		\
+				    0 : (((i) - 1) * BITS_PER_PARAM)))
 
 #define MR_COMPONENT(x, mul, rot, mask)(((x * mul) >> rot) & mask)
 
@@ -380,10 +382,11 @@ static inline uint64_t next_param(struct rng *rng, uint64_t round,
 				  uint64_t *params, uint n_params)
 {
 	uint64_t p, rot;
+	uint n_bits = n_params + BASE_N - 1;
 	do {
 		p = rand64(rng);
 		rot = MR_ROT(p);
-	} while (rot > 63 - n_params || rot < 5);
+	} while (rot > 64 - n_bits || rot < 4);
 	return p;
 }
 
@@ -472,18 +475,23 @@ static void find_unresolved_small_tuples(struct hashcontext *ctx,
 	}
 	printf("%u empty buckets\n", size_counts[0]);
 	printf("%u singletons\n", size_counts[1]);
+	bool started = false;
 	for (j = 2; j <= max_size; j++) {
-		printf("%u tuples of size %u\n", size_counts[j], j);
+		if (size_counts[j] == 0 && ! started) {
+			continue;
+		}
+		started = true;
+		printf("%3u tuples of size %u\n", size_counts[j], j);
 	}
 	printf("%u tuples of size > %u\n", size_counts[max_size + 1],
 	       max_size);
 
-	dest->tuples[0] = (struct tuple_list){NULL, 0, 0};
-	dest->tuples[1] = (struct tuple_list){NULL, 1, 0};
+	dest->tuples[0] = (struct tuple_list){NULL, 0};
+	dest->tuples[1] = (struct tuple_list){NULL, 0};
 
 	for (j = 0; j <= max_size; j++) {
 		uint64_t *array = calloc(j * size_counts[j], sizeof(array[0]));
-		dest->tuples[j] = (struct tuple_list){array, j, 0};
+		dest->tuples[j] = (struct tuple_list){array, 0};
 	}
 	for (j = 0; j < n_hashes; j++) {
 		struct hash_big_tuple *p = &tuples[j];
@@ -518,33 +526,6 @@ static void free_tuple_data(struct hash_tuples *tuples)
 }
 
 
-/* construct nibble counts for each rotate */
-static inline uint count_tuple_collisions_8bit(uint64_t *tuple,
-					       uint size,
-					       uint64_t acc[8])
-{
-
-	/*XXX go to 8 bit counters, use aligned array,
-	  encourage SSE for compare */
-	uint i, j;
-	acc[0] = acc[1] = acc[2] = acc[3] = 0;
-	acc[4] = acc[5] = acc[6] = acc[7] = 0;
-	for (j = 0; j < size; j++) {
-		uint64_t r = tuple[j];
-		for (i = 0; i < 8; i++) {
-			uint64_t p = r >> (i * 16);
-			p &= 0xff;
-			p |= p << 28;
-			p &= 0x0000000f0000000f;
-			p |= p << 14;
-			p &= 0x0003000300030003;
-			p |= p << 7;
-			p &= 0x0101010101010101;
-			acc[i] += p;
-		}
-	}
-}
-
 static uint do_squashing_round(struct hashcontext *ctx,
 			       struct multi_rot *c,
 			       uint n_candidates,
@@ -553,130 +534,95 @@ static uint do_squashing_round(struct hashcontext *ctx,
 {
 	uint h, i, k;
 	uint64_t j;
-	uint collisions, best_collisions = UINT_MAX;
 	uint64_t best_param = 0;
 	uint64_t *params = c->params;
 	struct hash_tuples tuples;
 	uint n_bits = n + BASE_N - 1;
-	uint8_t acc[64] __attribute__((aligned(32)));
-	uint8_t counts[64] __attribute__((aligned(32)));
-	uint32_t scores[64] __attribute__((aligned(32)));
+
 	max = MIN(max, MAX_SMALL_TUPLE);
 	find_unresolved_small_tuples(ctx, params, n, &tuples, max);
 	uint32_t best_score = UINT32_MAX;
-	attempts *= 5;
-	printf("making %lu attempts\n", attempts);
+	uint32_t mask = MR_MASK(n);
+	attempts *= 2;
+	printf("making %lu attempts. mask %u\n", attempts, mask);
 
 	START_TIMER(squashing);
 
 	/* we don't care about non-collisions to the right of this parameter */
 	uint64_t inaccessible_shifts = (1UL << n_bits) - 1;
 	inaccessible_shifts |= inaccessible_shifts << (64 - n_bits);
+	uint64_t past_fours = 0;
 
 	for (j = 0; j < attempts; j++) {
 		/* we don't need to calculate the full hash */
 		uint64_t param = next_param(ctx->rng, j, params, n + 1);
-		uint64_t non_collisions = ~inaccessible_bits;
 		uint64_t mul = MR_MUL(param);
-		param &= ~MR_ROT_MASK;
-		/* first the ones we need to split into nibbles */
+		uint64_t rot = MR_ROT(param);
+		//rot += mask_shift;
+		uint score = 0;
+		struct tuple_list t;
+
 		for (k = max; k >= 4; k--) {
-			memset(acc, 0, 64);
-			struct tuple_list t = tuples.tuples[k];
+			uint tmp_score = 0;
+			uint ones_target = (k + 1) / 2;
+
+			t = tuples.tuples[k];
 			for (i = 0; i < t.n; i++) {
-				count_tuple_collisions_8bit(t.raw + i * k,
-							    k,
-							    (uint64_t*)counts);
-				/*so we have 64 1 byte counts of the number of
-				  1s in the group at each rotation. Ideally
-				  the number of ones would be k/2 for even k,
-				  and either k/2 or k/2 + 1 for odd k (i.e. 2
-				  or 3 when k is 5).
-
-				  we use a quadratic penalty.
-				*/
-				if ((k & 1) == 0) {
-					/* the easy case */
-					for (h = 0; h < 64; h++) {
-						counts[h] -= h/2;
-						acc[h] = MIN(acc[h] + counts[h] * counts[h],
-							     255);
-					}
-				} else {
-					for (h = 0; h < 64; h++) {
-						uint8_t c = counts[h] - h/2;
-						uint8_t d = counts[h] - h/2 - 1;
-						c = MIN(abs(c), abs(d));
-						acc[h] = MIN(acc[h] + c * c, 255);
-					}
+				uint64_t *raw = t.raw + i * k;
+				uint ones = 0;
+				uint zeros;
+				uint d;
+				for (h = 0; h < k; h++) {
+					ones += MR_COMPONENT(raw[h], mul, rot, mask) ? 1 : 0;
 				}
+				zeros = k - ones;
+				d = MAX(ones, zeros) - ones_target;
+				tmp_score += d * d;
 			}
-			/* we have accumulated error for each tuple of this size 
-			 (saturated at 255). */
-			for (h = 0; h < 64; h++) {
-				scores[h] += acc[h] * k;
-			}
-		}
-		
-		for (h = 0; h < 64; h++) {
-			if (scores[h] < 
-		}
+			score += tmp_score;
 
-		
+			if (score > best_score) {
+				goto next;
+			}
+		}
+		past_fours++;
+		/* do the threes */
 		t = tuples.tuples[3];
 		for (i = 0; i < t.n; i++) {
-			a = t.raw[i * 3    ] * mul;
-			b = t.raw[i * 3 + 1] * mul;
-			c = t.raw[i * 3 + 2] * mul;
-			ab = a ^ b;
-			ac = a ^ c;
-			non_collisions &= (ab | ac);
+			uint64_t a = MR_COMPONENT(t.raw[i * 3    ], mul, rot, mask);
+			uint64_t b = MR_COMPONENT(t.raw[i * 3 + 1], mul, rot, mask);
+			uint64_t c = MR_COMPONENT(t.raw[i * 3 + 2], mul, rot, mask);
+			score += (a == b && a == c) * 2;
 		}
-		if (non_collisions == 0) {
-			continue;
+		/* pairs */
+		t = tuples.tuples[2];
+		for (i = 0; i < t.n; i++) {
+			uint64_t a = MR_COMPONENT(t.raw[i * 2    ], mul, rot, mask);
+			uint64_t b = MR_COMPONENT(t.raw[i * 2 + 1], mul, rot, mask);
+			score += (a == b);
 		}
 
-		past_triples++;
-		//printf("got past triples at %lu. non-collisions %016lx\n", j, non_collisions);
-		/* at this point we have met the mandatory criteria, and
-		   increased the number of pairs for the next round by
-		   2 * n_quads + 1 * n_triples.
-
-		   we want to reduce the number of pairs in this round as much
-		   as possible, so check the good rotates found in the
-		   quad/triple check for pair elimination */
-
-		non_collisions >>= n_bits;
-
-		for (k = 0; non_collisions; k++) {
-			if (non_collisions & 1) {
-				uint64_t p = param + k * MR_ROT_STEP;
-				collisions = test_all_pairs(p,
-							    tuples.tuples[2],
-							    n + 1);
-				if (collisions < best_collisions) {
-					best_collisions = collisions;
-					best_param = p;
-					printf("new squashing best %15lx »%-2lu at %lu:"
-					       " collisions %u\n",
-					       MR_MUL(p), MR_ROT(p), j, collisions);
-					if (collisions == 0) {
-						goto win;
-					}
-				}
+		if (score < best_score) {
+			best_score = score;
+			best_param = param;
+			printf("new squashing best %15lx »%-2lu at %lu:"
+			       " score %u\n",
+			       MR_MUL(param), MR_ROT(param), j, score);
+			if (score == 0) {
+				goto win;
 			}
-			non_collisions >>= 1;
 		}
+	  next:
+		continue;
 	}
   win:
-	printf("past triples %lu times\n", past_triples);
+	printf("past fours %lu times\n", past_fours);
 	params[n] = best_param;
 	PRINT_TIMER(squashing);
-	best_collisions += 2 * tuples.tuples[4].n + tuples.tuples[3].n;
-	uint best_collisions2 = test_params_running(ctx, params, n,
-						    best_collisions);
-	printf("best collisions %u; recalculated %u\n",
-	       best_collisions, best_collisions2);
+	uint best_collisions = test_params_running(ctx, params, n,
+						   UINT_MAX);
+	printf("best score %u; collisions %u\n",
+	       best_score, best_collisions);
 
 	free_tuple_data(&tuples);
 	return best_collisions;
@@ -714,11 +660,11 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 		/* we don't care about non-collisions to the right of this parameter */
 		uint64_t inaccessible_shifts = (1UL << n_bits) - 1;
 		inaccessible_shifts |= inaccessible_shifts << (64 - n_bits);
-		uint64_t non_collisions = ~inaccessible_bits;
+		uint64_t non_collisions = ~inaccessible_shifts;
 		uint64_t mul = MR_MUL(param);
 		param &= ~MR_ROT_MASK;
 		uint64_t a, b, c, d;
-		uint64_t ab, ac, ad, bd, cd, abcd;
+		uint64_t ab, ac, ad, bc, bd, cd, abcd;
 		/* first check the 4s then the 3s then count the 2s. */
 		struct tuple_list t = tuples.tuples[4];
 		for (i = 0; i < t.n; i++) {
@@ -729,32 +675,34 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 			ab = a ^ b;
 			ac = a ^ c;
 			ad = a ^ d;
-			//bc = b ^ c;
+			bc = b ^ c;
 			bd = b ^ d;
 			cd = c ^ d;
-			abcd = ((~ab & ~ac) &
-				(~bd & ~cd) &
-				(~ad & ~bd) &
-				(~ac & ~cd)); /* 1 bits mean collisions */
-			non_collisions &= ~abcd;
+
+			/* We need each one to not collide with 2 others.
+			 */
+
+			abcd = ((ab | ac) &
+				(bc | bd) &
+				(bc | cd) &
+				(ad | cd));
+			non_collisions &= abcd;
 		}
 		if (non_collisions == 0) {
 			/* no rotate of this mul works, try with another */
 			continue;
 		}
-		if (! relax) {
-			t = tuples.tuples[3];
-			for (i = 0; i < t.n; i++) {
-				a = t.raw[i * 3    ] * mul;
-				b = t.raw[i * 3 + 1] * mul;
-				c = t.raw[i * 3 + 2] * mul;
-				ab = a ^ b;
-				ac = a ^ c;
-				non_collisions &= (ab | ac);
-			}
-			if (non_collisions == 0) {
-				continue;
-			}
+		t = tuples.tuples[3];
+		for (i = 0; i < t.n; i++) {
+			a = t.raw[i * 3    ] * mul;
+			b = t.raw[i * 3 + 1] * mul;
+			c = t.raw[i * 3 + 2] * mul;
+			ab = a ^ b;
+			ac = a ^ c;
+			non_collisions &= (ab | ac);
+		}
+		if (non_collisions == 0) {
+			continue;
 		}
 		past_triples++;
 		//printf("got past triples at %lu. non-collisions %016lx\n", j, non_collisions);
