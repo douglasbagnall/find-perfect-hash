@@ -30,22 +30,22 @@
 
 from math import *
 import sys
-    
+
 def fact_n_over_fact_m(n, m):
     x = 1
     while m < n:
-        m += 1                
+        m += 1
         x *= m
     return x
 
 def prob_of_perfection(n, m, k):
     # n strings, m 1-bit hash candidates, k bits selected
     q = 2 ** k
-    
+
     if n > q:
         print 'more strings than bits allow'
         return 0.0
-    
+
     bit_combos = fact_n_over_fact_m(m, k)
     bit_combos /= fact_n_over_fact_m(m - k, 1)
 
@@ -57,12 +57,16 @@ def prob_of_perfection(n, m, k):
     print 'perfect', n_perfect
     print 'hashes ', n_hashes
 
+    print 'fraction that are perfect:', exp(log(n_perfect) - log(n_hashes))
+    print 'fraction as bits', log(n_hashes, 2) - log(n_perfect, 2)
+
+
     p = exp(log(bit_combos) + log(n_perfect) - log(n_hashes))
 
     print p
     print int(1.0/p)
     return p
-    
+
 def main():
     n, m, k = [int(x) for x in sys.argv[1:]]
     prob_of_perfection(n, m, k)
