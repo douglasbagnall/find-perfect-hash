@@ -635,7 +635,7 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 				 uint64_t attempts,
 				 uint n)
 {
-	uint i, k;
+	uint i;
 	uint64_t j;
 	uint collisions, best_collisions = UINT_MAX;
 	uint64_t best_param = 0;
@@ -656,11 +656,12 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 	for (j = 0; j < attempts; j++) {
 		/* we don't need to calculate the full hash */
 		uint64_t param = next_param(ctx->rng, j, params, n + 1);
-		uint64_t non_collisions = ~0;
+		uint64_t non_collisions = ~0ULL;
 		uint64_t mul = MR_MUL(param);
 		param &= ~MR_ROT_MASK;
 		uint64_t a, b, c, d;
 		uint64_t ab, ac, ad, bc, bd, cd, abcd;
+
 		/* first check the 4s then the 3s then count the 2s. */
 		struct tuple_list t = tuples.tuples[4];
 		for (i = 0; i < t.n; i++) {
@@ -710,10 +711,12 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 		   as possible, so check the good rotates found in the
 		   quad/triple check for pair elimination */
 
-		uint64_t nc = ROTATE(non_collisions, n_bits);
-		for (k = 0; nc; k++) {
+		uint64_t nc = non_collisions;
+		uint64_t p = param;
+		uint rotate = n_bits;
+		while (nc) {
 			if (nc & 1) {
-				uint64_t p = param + k * MR_ROT_STEP;
+				p = param + rotate * MR_ROT_STEP;
 				collisions = test_all_pairs(p,
 							    tuples.tuples[2],
 							    n + 1);
@@ -729,6 +732,7 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 				}
 			}
 			nc >>= 1;
+			rotate = MIN(rotate - 1, 63);
 		}
 	}
   win:
