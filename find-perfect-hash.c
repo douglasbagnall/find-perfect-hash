@@ -135,10 +135,7 @@ static bool check_raw_hash(struct hashcontext *ctx)
 		    (1 << BASE_N) - 1 :					\
 		    ((1 << BITS_PER_PARAM) - 1) << (BASE_N + ((i) - 1) * BITS_PER_PARAM))
 
-#define MR_MASK_SHIFT(i) (BASE_N + (((i) == 0) ?		\
-				    0 : (((i) - 1) * BITS_PER_PARAM)))
-
-#define MR_COMPONENT(x, mul, rot, mask)(((x * mul) >> rot) & mask)
+#define MR_COMPONENT(x, mul, rot, mask)(ROTATE((x * mul), rot) & mask)
 
 static inline uint32_t hash_component(uint64_t *params, uint i, uint64_t x)
 {
@@ -245,7 +242,7 @@ static void describe_hash(struct hashcontext *ctx,
 		} else {
 			printf("\033[01;%dm", 36 + (i != 0));
 		}
-		printf("×%015lx »%-2lu & %04x ",
+		printf("×%015lx ↻%-2lu & %04x ",
 		       MR_MUL(x), MR_ROT(x), mask);
 	}
 	printf("\033[00m\n");
@@ -381,13 +378,7 @@ static uint64_t calc_best_error(struct hashcontext *ctx, uint n_params)
 static inline uint64_t next_param(struct rng *rng, uint64_t round,
 				  uint64_t *params, uint n_params)
 {
-	uint64_t p, rot;
-	uint n_bits = n_params + BASE_N - 1;
-	do {
-		p = rand64(rng);
-		rot = MR_ROT(p);
-	} while (rot > 64 - n_bits || rot < 4);
-	return p;
+	return rand64(rng);
 }
 
 
@@ -550,7 +541,6 @@ static uint do_squashing_round(struct hashcontext *ctx,
 	uint64_t best_param = 0;
 	uint64_t *params = c->params;
 	struct hash_tuples tuples;
-	uint n_bits = n + BASE_N - 1;
 
 	max = MIN(max, MAX_SMALL_TUPLE);
 	find_unresolved_small_tuples(ctx, params, n, &tuples, max);
@@ -561,9 +551,6 @@ static uint do_squashing_round(struct hashcontext *ctx,
 
 	START_TIMER(squashing);
 
-	/* we don't care about non-collisions to the right of this parameter */
-	uint64_t inaccessible_shifts = (1UL << n_bits) - 1;
-	inaccessible_shifts |= inaccessible_shifts << (64 - n_bits);
 	uint64_t past_fours = 0;
 
 	for (j = 0; j < attempts; j++) {
@@ -571,7 +558,6 @@ static uint do_squashing_round(struct hashcontext *ctx,
 		uint64_t param = next_param(ctx->rng, j, params, n + 1);
 		uint64_t mul = MR_MUL(param);
 		uint64_t rot = MR_ROT(param);
-		//rot += mask_shift;
 		uint score = 0;
 		struct tuple_list t;
 
@@ -670,10 +656,7 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 	for (j = 0; j < attempts; j++) {
 		/* we don't need to calculate the full hash */
 		uint64_t param = next_param(ctx->rng, j, params, n + 1);
-		/* we don't care about non-collisions to the right of this parameter */
-		uint64_t inaccessible_shifts = (1UL << n_bits) - 1;
-		inaccessible_shifts |= inaccessible_shifts << (64 - n_bits);
-		uint64_t non_collisions = ~inaccessible_shifts;
+		uint64_t non_collisions = ~0;
 		uint64_t mul = MR_MUL(param);
 		param &= ~MR_ROT_MASK;
 		uint64_t a, b, c, d;
@@ -727,10 +710,9 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 		   as possible, so check the good rotates found in the
 		   quad/triple check for pair elimination */
 
-		non_collisions >>= n_bits;
-
-		for (k = 0; non_collisions; k++) {
-			if (non_collisions & 1) {
+		uint64_t nc = ROTATE(non_collisions, n_bits);
+		for (k = 0; nc; k++) {
+			if (nc & 1) {
 				uint64_t p = param + k * MR_ROT_STEP;
 				collisions = test_all_pairs(p,
 							    tuples.tuples[2],
@@ -746,7 +728,7 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 					}
 				}
 			}
-			non_collisions >>= 1;
+			nc >>= 1;
 		}
 	}
   win:
