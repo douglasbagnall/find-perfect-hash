@@ -476,12 +476,25 @@ static void find_unresolved_small_tuples(struct hashcontext *ctx,
 	printf("%u empty buckets\n", size_counts[0]);
 	printf("%u singletons\n", size_counts[1]);
 	bool started = false;
+	uint max = 1;
 	for (j = 2; j <= max_size; j++) {
-		if (size_counts[j] == 0 && ! started) {
+		max = MAX(max, size_counts[j]);
+	}
+	for (j = 2; j <= max_size; j++) {
+		uint count = size_counts[j];
+		if (count == 0 && ! started) {
 			continue;
 		}
 		started = true;
-		printf("%3u tuples of size %u\n", size_counts[j], j);
+		char *s = "##################################################";
+		uint len = count * strlen(s) / max;
+		if (count && len == 0) {
+			s = ":";
+			len = 1;
+		}
+		printf("%3u tuples of size %-2u " C_DARK_YELLOW
+		       "%.*s\n" C_NORMAL, count, j,
+		       len, s);
 	}
 	printf("%u tuples of size > %u\n", size_counts[max_size + 1],
 	       max_size);
