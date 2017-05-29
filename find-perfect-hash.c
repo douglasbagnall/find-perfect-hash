@@ -529,6 +529,32 @@ static void free_tuple_data(struct hash_tuples *tuples)
 	}
 }
 
+/* construct nibble counts for each rotate */
+static inline uint count_tuple_collisions_8bit(uint64_t *tuple,
+					       uint size,
+					       uint64_t acc[8])
+{
+	/*XXX go to 8 bit counters, use aligned array,
+	  encourage SSE for compare */
+	uint i, j;
+	acc[0] = acc[1] = acc[2] = acc[3] = 0;
+	acc[4] = acc[5] = acc[6] = acc[7] = 0;
+	for (j = 0; j < size; j++) {
+		uint64_t r = tuple[j];
+		for (i = 0; i < 8; i++) {
+			uint64_t p = r >> (i * 16);
+			p &= 0xff;
+			p |= p << 28;
+			p &= 0x0000000f0000000f;
+			p |= p << 14;
+			p &= 0x0003000300030003;
+			p |= p << 7;
+			p &= 0x0101010101010101;
+			acc[i] += p;
+		}
+	}
+}
+
 
 static uint do_squashing_round(struct hashcontext *ctx,
 			       struct multi_rot *c,
