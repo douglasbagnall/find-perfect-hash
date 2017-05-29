@@ -426,11 +426,16 @@ static inline uint64_t test_pair_all_rot(uint64_t param,
 	return all_a ^ all_b;
 }
 
+struct size_extrema {
+	uint min;
+	uint max;
+	uint mean;
+};
 
-static void find_unresolved_small_tuples(struct hashcontext *ctx,
-					 uint64_t *params, uint n,
-					 struct hash_tuples *dest,
-					 uint max_size)
+static struct size_extrema find_unresolved_small_tuples(struct hashcontext *ctx,
+							uint64_t *params, uint n,
+							struct hash_tuples *dest,
+							uint max_size)
 {
 	uint j;
 	uint32_t hash_mask = (1 << ctx->bits) - 1;
@@ -438,13 +443,13 @@ static void find_unresolved_small_tuples(struct hashcontext *ctx,
 	uint n_hashes = 1 << n_bits;
 	struct hash_big_tuple *tuples = calloc(n_hashes, sizeof(tuples[0]));
 	uint *size_counts = calloc(MAX_SMALL_TUPLE + 2, sizeof(uint));
-
 	if (max_size == 0){
 		max_size = MAX_SMALL_TUPLE;
 	} else {
 		max_size = MIN(max_size, MAX_SMALL_TUPLE);
 	}
 	dest->max_size = max_size;
+	struct size_extrema size_bounds = {2, max_size, 0};
 
 	for (j = 0; j < ctx->n; j++) {
 		uint32_t raw = ctx->data[j].raw_hash;
@@ -468,15 +473,21 @@ static void find_unresolved_small_tuples(struct hashcontext *ctx,
 	printf("%u singletons\n", size_counts[1]);
 	bool started = false;
 	uint max = 1;
+	uint64_t sum = 0;
+	uint64_t n_tuples = 0;
 	for (j = 2; j <= max_size; j++) {
 		max = MAX(max, size_counts[j]);
 	}
 	for (j = 2; j <= max_size; j++) {
 		uint count = size_counts[j];
 		if (count == 0 && ! started) {
+			size_bounds.min = j + 1;
 			continue;
 		}
 		started = true;
+		sum += count * j;
+		n_tuples += count;
+
 		char *s = "##################################################";
 		uint len = count * strlen(s) / max;
 		if (count && len == 0) {
@@ -486,9 +497,14 @@ static void find_unresolved_small_tuples(struct hashcontext *ctx,
 		printf("%3u tuples of size %-2u " C_DARK_YELLOW
 		       "%.*s\n" C_NORMAL, count, j,
 		       len, s);
+		if (count) {
+			size_bounds.max = j;
+		}
 	}
 	printf("%u tuples of size > %u\n", size_counts[max_size + 1],
 	       max_size);
+
+	size_bounds.mean = (sum + (n_tuples / 2)) / n_tuples;
 
 	dest->tuples[0] = (struct tuple_list){NULL, 0};
 	dest->tuples[1] = (struct tuple_list){NULL, 0};
@@ -517,6 +533,7 @@ static void find_unresolved_small_tuples(struct hashcontext *ctx,
 	}
 	free(tuples);
 	free(size_counts);
+	return size_bounds;
 }
 
 static void free_tuple_data(struct hash_tuples *tuples)
@@ -529,28 +546,31 @@ static void free_tuple_data(struct hash_tuples *tuples)
 	}
 }
 
-/* construct nibble counts for each rotate */
-static inline uint count_tuple_collisions_8bit(uint64_t *tuple,
+/* count set bits for each rotate */
+static inline void count_tuple_collisions_8bit(uint64_t *tuple,
 					       uint size,
-					       uint64_t acc[8])
+					       uint64_t param,
+					       uint64_t ones[8])
 {
 	/*XXX go to 8 bit counters, use aligned array,
 	  encourage SSE for compare */
 	uint i, j;
-	acc[0] = acc[1] = acc[2] = acc[3] = 0;
-	acc[4] = acc[5] = acc[6] = acc[7] = 0;
+	uint64_t p;
+	uint64_t mul = MR_MUL(param);
+	ones[0] = ones[1] = ones[2] = ones[3] = 0ULL;
+	ones[4] = ones[5] = ones[6] = ones[7] = 0ULL;
 	for (j = 0; j < size; j++) {
-		uint64_t r = tuple[j];
+		uint64_t r = tuple[j] * mul;
 		for (i = 0; i < 8; i++) {
-			uint64_t p = r >> (i * 16);
-			p &= 0xff;
-			p |= p << 28;
-			p &= 0x0000000f0000000f;
-			p |= p << 14;
-			p &= 0x0003000300030003;
-			p |= p << 7;
-			p &= 0x0101010101010101;
-			acc[i] += p;
+			p = r >> (i * 8);
+			p &= 0xffULL;
+			p |= p << 28ULL;
+			p &= 0x0000000f0000000fULL;
+			p |= p << 14ULL;
+			p &= 0x0003000300030003ULL;
+			p |= p << 7ULL;
+			p &= 0x0101010101010101ULL;
+			ones[i] += p;
 		}
 	}
 }
@@ -567,81 +587,100 @@ static uint do_squashing_round(struct hashcontext *ctx,
 	uint64_t best_param = 0;
 	uint64_t *params = c->params;
 	struct hash_tuples tuples;
+	uint n_bits = n + BASE_N - 1;
 
+	uint min, mean;
 	max = MIN(max, MAX_SMALL_TUPLE);
-	find_unresolved_small_tuples(ctx, params, n, &tuples, max);
+	struct size_extrema size_bounds = find_unresolved_small_tuples(ctx, params,
+								       n, &tuples,
+								       max);
+	min = size_bounds.min;
+	max = size_bounds.max;
+	mean = size_bounds.mean;
 	uint32_t best_score = UINT32_MAX;
 	uint32_t mask = MR_MASK(n);
-	attempts *= 2;
-	printf("making %lu attempts. mask %u\n", attempts, mask);
+
+	attempts /= 20;
+	attempts *= MAX(MIN(mean, 20), 4);
+
+	printf("making %lu attempts. mask %u max %u min %u mean %u\n",
+	       attempts, mask, max, min, mean);
 
 	START_TIMER(squashing);
 
-	uint64_t past_fours = 0;
+	uint64_t past_half_way = 0;
+	uint64_t short_cuts = 0;
 
 	for (j = 0; j < attempts; j++) {
 		/* we don't need to calculate the full hash */
 		uint64_t param = next_param(ctx->rng, j, params, n + 1);
-		uint64_t mul = MR_MUL(param);
-		uint64_t rot = MR_ROT(param);
-		uint score = 0;
+		param &= ~MR_ROT_MASK;
 		struct tuple_list t;
-
-		for (k = max; k >= 4; k--) {
-			uint tmp_score = 0;
+		uint8_t ones[64];
+		uint scores[64];
+		bool short_cut_exit = false;
+		memset(scores, 0, sizeof(scores));
+		//printf("attempt %lu max %u\n", j, max);
+		for (k = max; k >= min; k--) {
+			short_cut_exit = false;
 			uint ones_target = (k + 1) / 2;
-
 			t = tuples.tuples[k];
 			for (i = 0; i < t.n; i++) {
-				uint64_t *raw = t.raw + i * k;
-				uint ones = 0;
-				uint zeros;
-				uint d;
-				for (h = 0; h < k; h++) {
-					ones += MR_COMPONENT(raw[h], mul, rot, mask) ? 1 : 0;
+				count_tuple_collisions_8bit(t.raw + i * k,
+							    k,
+							    param,
+							    (uint64_t *)ones);
+				for (h = 0; h < 64; h++) {
+					ones[h] = MAX(ones[h], k - ones[h]) - ones_target;
 				}
-				zeros = k - ones;
-				d = MAX(ones, zeros) - ones_target;
-				tmp_score += d * d;
+				for (h = 0; h < 64; h++) {
+					uint x = ones[h];
+					scores[h] +=  x * x * k;
+				}
+ 			}
+			if (k < max && k != min) {
+				short_cut_exit = true;
+				for (h = 0; h < 64; h++) {
+					if (scores[h] < best_score) {
+						short_cut_exit = false;
+						break;
+					}
+				}
+				if (short_cut_exit) {
+					/* stop looking */
+					break;
+				}
 			}
-			score += tmp_score;
+			if (k == min + (max - min) / 2 + 1) {
+				past_half_way++;
+			}
+		}
+		if (short_cut_exit) {
+			short_cuts++;
+			continue;
+		}
 
-			if (score > best_score) {
-				goto next;
-			}
-		}
-		past_fours++;
-		/* do the threes */
-		t = tuples.tuples[3];
-		for (i = 0; i < t.n; i++) {
-			uint64_t a = MR_COMPONENT(t.raw[i * 3    ], mul, rot, mask);
-			uint64_t b = MR_COMPONENT(t.raw[i * 3 + 1], mul, rot, mask);
-			uint64_t c = MR_COMPONENT(t.raw[i * 3 + 2], mul, rot, mask);
-			score += (a == b && a == c) * 2;
-		}
-		/* pairs */
-		t = tuples.tuples[2];
-		for (i = 0; i < t.n; i++) {
-			uint64_t a = MR_COMPONENT(t.raw[i * 2    ], mul, rot, mask);
-			uint64_t b = MR_COMPONENT(t.raw[i * 2 + 1], mul, rot, mask);
-			score += (a == b);
-		}
+		uint64_t rotate = n_bits;
+		for (h = 0; h < 64; h++) {
+			//printf("h %u score %u best %u\n",
+			//h, scores[h], best_score);
 
-		if (score < best_score) {
-			best_score = score;
-			best_param = param;
-			printf("new squashing best %15lx »%-2lu at %lu:"
-			       " score %u\n",
-			       MR_MUL(param), MR_ROT(param), j, score);
-			if (score == 0) {
-				goto win;
+			if (scores[h] < best_score) {
+				best_score = scores[h];
+				best_param = param + rotate * MR_ROT_STEP;
+				printf("new squashing best %16lx & 1«%-2lu at %lu:"
+				       " score %u\n",
+				       MR_MUL(param), rotate, j, scores[h]);
+				if (best_score == 0) {
+					goto win;
+				}
 			}
+			rotate = MIN(rotate - 1, 63);
 		}
-	  next:
-		continue;
 	}
   win:
-	printf("past fours %lu times\n", past_fours);
+	printf("past half_way %lu times\n", past_half_way);
+	printf("short_cuts: %lu\n", short_cuts);
 	params[n] = best_param;
 	PRINT_TIMER(squashing);
 	uint best_collisions = test_params_running(ctx, params, n,
@@ -669,10 +708,14 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 	struct hash_tuples tuples;
 	uint n_bits = n + BASE_N - 1;
 	uint64_t past_triples = 0;
-	find_unresolved_small_tuples(ctx, params, n,
-				     &tuples, 4);
+	struct size_extrema size_bounds = find_unresolved_small_tuples(ctx, params, n,
+								       &tuples, 4);
+	if (size_bounds.max > 4) {
+		printf(C_RED "max size %u\n" C_NORMAL, size_bounds.max);
+		return UINT_MAX;
+	}
 
-	attempts *= 10;
+	attempts *= 20;
 	printf("making %lu attempts\n", attempts);
 
 	START_TIMER(penultimate);
