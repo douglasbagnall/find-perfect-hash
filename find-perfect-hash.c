@@ -434,6 +434,58 @@ static inline uint64_t test_pair_all_rot(uint64_t param,
 	return all_a ^ all_b;
 }
 
+static uint test_all_pairs_all_rot(uint64_t *param,
+				   struct tuple_list pairs,
+				   uint n_params,
+				   uint best_collisions)
+{
+	uint i, j;
+	uint n_bits = n_params + BASE_N - 1;
+	uint64_t p = *param & ~MR_ROT_MASK;
+	uint64_t mul = MR_MUL(p);
+	static uint8_t ones8[64] __attribute__((__aligned__(ALIGNMENT)));
+	static uint64_t *ones = (uint64_t*)ones8;
+
+	ones[0] = ones[1] = ones[2] = ones[3] = 0ULL;
+	ones[4] = ones[5] = ones[6] = ones[7] = 0ULL;
+
+	for (i = 0; i < pairs.n; i++) {
+		uint64_t a = pairs.raw[i * 2] * mul;
+		uint64_t b = pairs.raw[i * 2 + 1] * mul;
+		uint64_t c = a ^ b;
+		uint64_t d;
+		for (j = 0; j < 8; j++) {
+			d = c >> (j * 8);
+			d &= 0xffULL;
+			d |= d << 28ULL;
+			d &= 0x0000000f0000000fULL;
+			d |= d << 14ULL;
+			d &= 0x0003000300030003ULL;
+			d |= d << 7ULL;
+			d &= 0x0101010101010101ULL;
+			ones[j] += d;
+		}
+	}
+	uint8_t best_count = pairs.n - MIN(best_collisions, pairs.n);
+	uint8_t best_i = 255;
+
+	for (i = 0; i < 64; i++) {
+		if (ones8[i] > best_count) {
+			best_count = ones8[i];
+			best_i = i;
+		}
+	}
+	if (best_i < 64) {
+		uint64_t rotate = n_bits - best_i - 1;
+		rotate &= 63;
+		printf("best_i %u n_bits %u rotate %lu\n",
+		       best_i, n_bits, rotate);
+		*param = p + rotate * MR_ROT_STEP;
+	}
+	return pairs.n - best_count;
+}
+
+
 struct size_extrema {
 	uint min;
 	uint max;
@@ -909,13 +961,20 @@ static uint do_last_round(struct hashcontext *ctx,
 			}
 		}
 	}
+	if (pairs.n > 256) {
+		printf("the situation is really hopeless. stopping\n");
+		return UINT_MAX;
+	}
+
 	printf("trying for an inexact solution with %lu attempts\n",
 	       attempts);
 
 	for (j = 0; j < attempts; j++) {
 		/* we don't need to calculate the full hash */
 		uint64_t p = next_param(ctx->rng, j, params, N_PARAMS);
-		collisions = test_all_pairs(p, pairs, N_PARAMS);
+		collisions = test_all_pairs_all_rot(&p, pairs, N_PARAMS,
+						    best_collisions);
+
 		if (collisions < best_collisions) {
 			best_collisions = collisions;
 			best_param = p;
