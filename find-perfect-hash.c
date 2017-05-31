@@ -179,6 +179,43 @@ static inline void update_running_hash(struct hashcontext *ctx,
 }
 
 
+static bool reorder_params(struct multi_rot *c, uint a, uint b)
+{
+	if (a == b) {
+		return true;
+	}
+	uint64_t *params = c->params;
+	uint64_t p1 = params[a];
+	uint64_t p2 = params[b];
+	uint64_t mul1 = p1 & ~MR_ROT_MASK;
+	uint64_t mul2 = p2 & ~MR_ROT_MASK;
+	uint64_t r1 = MR_ROT(p1);
+	uint64_t r2 = MR_ROT(p2);
+	uint64_t nb1 = a + BASE_N - 1;
+	uint64_t nb2 = b + BASE_N - 1;
+	uint64_t e1 = r1 - nb1 + 1;
+	uint64_t e2 = r2 - nb2 + 1;
+
+	printf("reordering %u %u (bit %lu, %lu) r1 %lu r2 %lu\n",
+	       a, b, nb1, nb2, r1, r2);
+	printf("param 1 effective rotate %lu\n", e1);
+	printf("param 2 effective rotate %lu\n", e2);
+
+	printf("param 1 new rotate %lu\n", e1 + nb2);
+	printf("param 2 new rotate %lu\n", e2 + nb1);
+
+	r1 = (e1 + nb2) & 63;
+	r2 = (e2 + nb1) & 63;
+
+	uint64_t new1 = r1 * MR_ROT_STEP;
+	uint64_t new2 = r2 * MR_ROT_STEP;
+
+	params[b] = mul1 | new1;
+	params[a] = mul2 | new2;
+	return true;
+}
+
+
 static uint test_params(struct hashcontext *ctx,
 			uint64_t *params, uint n)
 {
@@ -535,8 +572,12 @@ static struct size_extrema find_unresolved_small_tuples(struct hashcontext *ctx,
 	uint max = 1;
 	uint64_t sum = 0;
 	uint64_t n_tuples = 0;
-	for (j = 2; j <= max_size; j++) {
+	uint max_occuring = 0;
+	for (j = max_size; j >= 2; j--) {
 		max = MAX(max, size_counts[j]);
+		if (max_occuring == 0 && size_counts[j]) {
+			max_occuring = size_counts[j];
+		}
 	}
 	for (j = 2; j <= max_size; j++) {
 		uint count = size_counts[j];
@@ -548,21 +589,23 @@ static struct size_extrema find_unresolved_small_tuples(struct hashcontext *ctx,
 		sum += count * j;
 		n_tuples += count;
 
-		char *s = "##################################################";
-		uint len = count * strlen(s) / max;
-		if (count && len == 0) {
-			s = ":";
-			len = 1;
+		const char *s = "#############################################";
+		if (j <= max_occuring) {
+			uint len = count * strlen(s) / max;
+			if (count && len == 0) {
+				s = ":";
+				len = 1;
+			}
+			printf("%4u tuples of size %-2u " C_DARK_YELLOW
+			       "%.*s\n" C_NORMAL, count, j,
+			       len, s);
 		}
-		printf("%4u tuples of size %-2u " C_DARK_YELLOW
-		       "%.*s\n" C_NORMAL, count, j,
-		       len, s);
 		if (count) {
 			size_bounds.max = j;
 		}
 	}
-	printf("%u tuples of size > %u\n", size_counts[max_size + 1],
-	       max_size);
+	printf("%4u tuples of size > %u\n", size_counts[max_size + 1],
+	       max_occuring);
 
 	size_bounds.mean = (sum + (n_tuples / 2)) / n_tuples;
 
@@ -639,9 +682,9 @@ static inline void count_tuple_collisions_8bit(uint64_t *tuple,
 
 static uint do_squashing_round(struct hashcontext *ctx,
 			       struct multi_rot *c,
-			       uint n_candidates,
 			       uint64_t attempts,
-			       uint n, uint max)
+			       uint n, uint max,
+			       uint32_t best_score)
 {
 	uint h, i, k;
 	uint64_t j;
@@ -658,7 +701,6 @@ static uint do_squashing_round(struct hashcontext *ctx,
 	min = size_bounds.min;
 	max = size_bounds.max;
 	mean = size_bounds.mean;
-	uint32_t best_score = UINT32_MAX;
 	uint32_t mask = MR_MASK(n);
 
 	attempts /= 20;
@@ -757,13 +799,13 @@ static uint do_squashing_round(struct hashcontext *ctx,
 
 static uint do_penultimate_round(struct hashcontext *ctx,
 				 struct multi_rot *c,
-				 uint n_candidates,
 				 uint64_t attempts,
-				 uint n)
+				 uint n,
+				 uint best_collisions)
 {
 	uint i;
 	uint64_t j;
-	uint collisions, best_collisions = UINT_MAX;
+	uint collisions;
 	uint64_t best_param = 0;
 	uint64_t *params = c->params;
 	struct hash_tuples tuples;
@@ -882,7 +924,6 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 
 static uint do_last_round(struct hashcontext *ctx,
 			  struct multi_rot *c,
-			  uint n_candidates,
 			  uint64_t attempts)
 {
 	uint i;
@@ -1000,7 +1041,6 @@ static uint do_last_round(struct hashcontext *ctx,
 
 static void do_l2_round(struct hashcontext *ctx,
 			struct multi_rot *c,
-			uint n_candidates,
 			uint64_t attempts,
 			uint n)
 {
@@ -1050,6 +1090,51 @@ static void do_l2_round(struct hashcontext *ctx,
 	PRINT_TIMER(l2);
 }
 
+
+
+static void retry(struct hashcontext *ctx,
+		  struct multi_rot *c,
+		  uint attempts)
+{
+	uint64_t *params = c->params;
+	uint i;
+	struct hash_tuples tuples;
+	static struct size_extrema stats;
+	uint worst_tuple_size = 0;
+	uint worst_param = 0;
+
+	for (i = 1; i < N_PARAMS - 2; i++) {
+		reorder_params(c, i, N_PARAMS - 1);
+
+		stats = find_unresolved_small_tuples(ctx, params, N_PARAMS - 1,
+						     &tuples, 0);
+		if (stats.max > worst_tuple_size) {
+			worst_tuple_size = stats.max;
+			worst_param = i;
+		}
+		free_tuple_data(&tuples);
+
+		reorder_params(c, i, N_PARAMS - 1);
+		printf(C_GREEN "---------------------\n" C_NORMAL);
+	}
+
+	reorder_params(c, worst_param, N_PARAMS - 1);
+	update_running_hash(ctx, params, N_PARAMS - 1);
+
+	START_TIMER(retry);
+	if (worst_tuple_size == 2) {
+		c->collisions = do_last_round(ctx, c, attempts);
+	} else if (worst_tuple_size == 3) {
+		do_penultimate_round(ctx, c, attempts, N_PARAMS - 1,
+				     c->collisions);
+	} else {
+		do_squashing_round(ctx, c, attempts, N_PARAMS - 1,
+				   worst_tuple_size, c->collisions);
+	}
+
+	PRINT_TIMER(retry);
+}
+
 static void init_multi_rot(struct hashcontext *ctx,
 			   struct multi_rot *c,
 			   uint n_candidates)
@@ -1065,11 +1150,11 @@ static void init_multi_rot(struct hashcontext *ctx,
 		attempts = (uint64_t)n_candidates * original_n_strings / ctx->n;
 
 		if (worst > MAX_SMALL_TUPLE) {
-			do_l2_round(ctx, c, n_candidates, attempts, i);
+			do_l2_round(ctx, c, attempts, i);
 		} else {
 			printf("small tuple squashing\n");
-			do_squashing_round(ctx, c, n_candidates, attempts, i,
-					   worst);
+			do_squashing_round(ctx, c, attempts, i,
+					   worst, UINT_MAX);
 		}
 		worst = find_non_colliding_strings(ctx, params, i + 1, false);
 	}
@@ -1080,14 +1165,14 @@ static void init_multi_rot(struct hashcontext *ctx,
 		return;
 	}
 	attempts = (uint64_t)n_candidates * original_n_strings / ctx->n;
-	do_penultimate_round(ctx, c, n_candidates, attempts, N_PARAMS - 2);
-	c->collisions = do_last_round(ctx, c, n_candidates, attempts);
+	do_penultimate_round(ctx, c, attempts, N_PARAMS - 2, UINT_MAX);
+	c->collisions = do_last_round(ctx, c, attempts);
 }
 
 
 
 struct hashcontext *new_context(const char *filename, uint bits,
-				uint n_candidates, struct rng *rng)
+				struct rng *rng)
 {
 	struct strings strings = load_strings(filename);
 	struct hashdata *data = new_hashdata(&strings);
@@ -1121,8 +1206,7 @@ static int find_hash(const char *filename, uint bits,
 		     uint n_candidates, struct rng *rng)
 {
 
-	struct hashcontext *ctx = new_context(filename, bits,
-					     n_candidates, rng);
+	struct hashcontext *ctx = new_context(filename, bits, rng);
 
 	if (! check_raw_hash(ctx)) {
 		printf("This will never work because the raw hash collides\n");
@@ -1133,10 +1217,9 @@ static int find_hash(const char *filename, uint bits,
 	c.params = calloc(N_PARAMS, sizeof(uint64_t));
 	c.collisions = UINT_MAX;
 	init_multi_rot(ctx, &c, n_candidates);
+	retry(ctx, &c, n_candidates);
 
-	struct hashcontext *ctx2 = new_context(filename, bits,
-					       n_candidates, rng);
-
+	struct hashcontext *ctx2 = new_context(filename, bits, rng);
 
 	describe_hash(ctx2, &c);
 	free(c.params);
