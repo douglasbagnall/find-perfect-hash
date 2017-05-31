@@ -477,8 +477,8 @@ static struct size_extrema find_unresolved_small_tuples(struct hashcontext *ctx,
 		uint count = MIN(tuples[j].n, max_size + 1);
 		size_counts[count]++;
 	}
-	printf("%u empty buckets\n", size_counts[0]);
-	printf("%u singletons\n", size_counts[1]);
+	printf("%4u empty buckets\n", size_counts[0]);
+	printf("%4u singletons\n", size_counts[1]);
 	bool started = false;
 	uint max = 1;
 	uint64_t sum = 0;
@@ -502,7 +502,7 @@ static struct size_extrema find_unresolved_small_tuples(struct hashcontext *ctx,
 			s = ":";
 			len = 1;
 		}
-		printf("%3u tuples of size %-2u " C_DARK_YELLOW
+		printf("%4u tuples of size %-2u " C_DARK_YELLOW
 		       "%.*s\n" C_NORMAL, count, j,
 		       len, s);
 		if (count) {
