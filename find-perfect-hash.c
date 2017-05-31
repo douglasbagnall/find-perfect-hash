@@ -550,13 +550,14 @@ static void free_tuple_data(struct hash_tuples *tuples)
 static inline void count_tuple_collisions_8bit(uint64_t *tuple,
 					       uint size,
 					       uint64_t param,
-					       uint64_t ones[8])
+					       uint8_t ones8[64])
 {
 	/*XXX go to 8 bit counters, use aligned array,
 	  encourage SSE for compare */
 	uint i, j;
 	uint64_t p;
 	uint64_t mul = MR_MUL(param);
+	uint64_t *ones = (uint64_t *)ones8;
 	ones[0] = ones[1] = ones[2] = ones[3] = 0ULL;
 	ones[4] = ones[5] = ones[6] = ones[7] = 0ULL;
 	for (j = 0; j < size; j++) {
@@ -629,7 +630,7 @@ static uint do_squashing_round(struct hashcontext *ctx,
 				count_tuple_collisions_8bit(t.raw + i * k,
 							    k,
 							    param,
-							    (uint64_t *)ones);
+							    ones);
 				for (h = 0; h < 64; h++) {
 					ones[h] = MAX(ones[h], k - ones[h]) - ones_target;
 				}
