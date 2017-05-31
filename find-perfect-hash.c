@@ -636,10 +636,10 @@ static uint do_squashing_round(struct hashcontext *ctx,
 				}
 				for (h = 0; h < 64; h++) {
 					uint x = ones[h];
-					scores[h] +=  x * x * k;
+					scores[h] +=  x * x * x;
 				}
  			}
-			if (k < max && k != min) {
+			if (k < max && k > min) {
 				short_cut_exit = true;
 				for (h = 0; h < 64; h++) {
 					if (scores[h] < best_score) {
@@ -652,7 +652,7 @@ static uint do_squashing_round(struct hashcontext *ctx,
 					break;
 				}
 			}
-			if (k == min + (max - min) / 2 + 1) {
+			if (k == mean) {
 				past_half_way++;
 			}
 		}
