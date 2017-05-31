@@ -776,7 +776,7 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 		return UINT_MAX;
 	}
 
-	attempts *= 20;
+	attempts *= 40;
 	printf("making %lu attempts\n", attempts);
 
 	START_TIMER(penultimate);
@@ -898,13 +898,13 @@ static uint do_last_round(struct hashcontext *ctx,
 	struct tuple_list pairs = tuples.tuples[2];
 
 	printf("There are %u unresolved pairs\n", pairs.n);
-	attempts *= 10;
+	attempts *= 3;
 
 	START_TIMER(last);
 
 	if (pairs.n < 64 &&
 	    (1UL << pairs.n) < attempts * 6400UL) {
-		uint64_t exact_attempts = attempts * 100;
+		uint64_t exact_attempts = attempts * 500;
 		uint best_run = 0;
 		printf("trying for exact solution with %lu attempts (64 way parallel)\n",
 		       exact_attempts);
