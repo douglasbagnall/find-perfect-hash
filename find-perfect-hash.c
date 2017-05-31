@@ -318,14 +318,16 @@ static uint64_t test_params_with_l2_running(struct hashcontext *ctx,
 }
 
 
-static uint remove_non_colliding_strings(struct hashcontext *ctx,
-					 uint64_t *params, uint n)
+static uint find_non_colliding_strings(struct hashcontext *ctx,
+				       uint64_t *params, uint n,
+				       bool remove_non_colliding)
 {
 	int j, k;
 	uint32_t hash_mask = (1 << ctx->bits) - 1;
 	uint16_t *hits = ctx->hits;
 	uint worst = 0;
 	uint best = UINT_MAX;
+	uint n_bits = n + BASE_N - 1;
 	/* hash once for the counts */
 	for (j = 0; j < ctx->n; j++) {
 		uint32_t hash = unmasked_hash(ctx->data[j].raw_hash,
@@ -339,18 +341,24 @@ static uint remove_non_colliding_strings(struct hashcontext *ctx,
 		uint32_t hash = unmasked_hash(ctx->data[j].raw_hash,
 					      params, n);
 		hash &= hash_mask;
-		if (hits[hash] != 1) {
+		worst = MAX(worst, hits[hash]);
+		best = MIN(best, hits[hash]);
+
+		if (remove_non_colliding && hits[hash] != 1) {
 			ctx->data[k] = ctx->data[j];
 			k++;
-			worst = MAX(worst, hits[hash]);
-			best = MIN(best, hits[hash]);
 		}
 	}
 
-	ctx->n = k;
-	uint n_bits = n + BASE_N - 1;
-	printf("after %d params (%d bits) dropped %u unique strings, leaving %u\n",
-	       n, n_bits, j - k, k);
+	if (remove_non_colliding) {
+		ctx->n = k;
+		printf("after %d params (%d bits) dropped %u unique strings, "
+		       "leaving %u\n",
+		       n, n_bits, j - k, k);
+	} else {
+		printf("Done %d params (%d bits), not dropping uinque strings\n",
+		       n, n_bits);
+	}
 	printf("worst is %u; best is %u\n", worst, best);
 
 	if (worst > 1 << (ctx->bits - n_bits)) {
@@ -1004,7 +1012,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 			do_squashing_round(ctx, c, n_candidates, attempts, i,
 					   worst);
 		}
-		worst = remove_non_colliding_strings(ctx, params, i + 1);
+		worst = find_non_colliding_strings(ctx, params, i + 1, false);
 	}
 
 	/* try extra hard for the last two rounds */
