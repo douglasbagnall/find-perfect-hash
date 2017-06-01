@@ -1120,12 +1120,14 @@ static void retry(struct hashcontext *ctx,
 	if (worst_tuple_size == 2) {
 		c->collisions = do_last_round(ctx, c, attempts);
 	} else if (worst_tuple_size == 3) {
-		do_penultimate_round(ctx, c, attempts, N_PARAMS - 1,
+		do_penultimate_round(ctx, c, attempts, N_PARAMS,
 				     c->collisions);
 	} else {
-		do_squashing_round(ctx, c, attempts, N_PARAMS - 1,
+		do_squashing_round(ctx, c, attempts, N_PARAMS,
 				   worst_tuple_size, c->collisions);
 	}
+	
+	reorder_params(c, worst_param, N_PARAMS - 1);
 
 	PRINT_TIMER(retry);
 }
