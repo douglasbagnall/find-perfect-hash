@@ -191,24 +191,21 @@ static bool reorder_params(struct multi_rot *c, uint a, uint b)
 	uint64_t mul2 = p2 & ~MR_ROT_MASK;
 	uint64_t r1 = MR_ROT(p1);
 	uint64_t r2 = MR_ROT(p2);
-	uint64_t nb1 = a + BASE_N - 1;
-	uint64_t nb2 = b + BASE_N - 1;
-	uint64_t e1 = r1 - nb1 + 1;
-	uint64_t e2 = r2 - nb2 + 1;
+	uint64_t e1 = r1 - a;
+	uint64_t e2 = r2 - b;
+	uint64_t n1 = (r1 - a + b) & 63;
+	uint64_t n2 = (r2 - b + a) & 63;
 
-	printf("reordering %u %u (bit %lu, %lu) r1 %lu r2 %lu\n",
-	       a, b, nb1, nb2, r1, r2);
-	printf("param 1 effective rotate %lu\n", e1);
-	printf("param 2 effective rotate %lu\n", e2);
+	printf("reordering %u %u (e %lu, %lu) r1 %lu r2 %lu\n",
+	       a, b, e1, e2, r1, r2);
 
-	printf("param 1 new rotate %lu\n", e1 + nb2);
-	printf("param 2 new rotate %lu\n", e2 + nb1);
-
-	r1 = (e1 + nb2) & 63;
-	r2 = (e2 + nb1) & 63;
-
-	uint64_t new1 = r1 * MR_ROT_STEP;
-	uint64_t new2 = r2 * MR_ROT_STEP;
+	printf("param 1 original rotate %lu effective %lu, new %lu\n",
+	       r1, e1, n1);
+	printf("param 2 original rotate %lu effective %lu, new %lu\n",
+	       r2, e2, n2);
+	
+	uint64_t new1 = n1 * MR_ROT_STEP;
+	uint64_t new2 = n2 * MR_ROT_STEP;
 
 	params[b] = mul1 | new1;
 	params[a] = mul2 | new2;
@@ -515,8 +512,6 @@ static uint test_all_pairs_all_rot(uint64_t *param,
 	if (best_i < 64) {
 		uint64_t rotate = n_bits - best_i - 1;
 		rotate &= 63;
-		printf("best_i %u n_bits %u rotate %lu\n",
-		       best_i, n_bits, rotate);
 		*param = p + rotate * MR_ROT_STEP;
 	}
 	return pairs.n - best_count;
