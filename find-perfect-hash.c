@@ -564,14 +564,14 @@ static struct size_extrema find_unresolved_small_tuples(struct hashcontext *ctx,
 	printf("%4u empty buckets\n", size_counts[0]);
 	printf("%4u singletons\n", size_counts[1]);
 	bool started = false;
-	uint max = 1;
+	uint max_count = 1;
 	uint64_t sum = 0;
 	uint64_t n_tuples = 0;
 	uint max_occuring = 0;
 	for (j = max_size; j >= 2; j--) {
-		max = MAX(max, size_counts[j]);
+		max_count = MAX(max_count, size_counts[j]);
 		if (max_occuring == 0 && size_counts[j]) {
-			max_occuring = size_counts[j];
+			max_occuring = j;
 		}
 	}
 	for (j = 2; j <= max_size; j++) {
@@ -586,7 +586,7 @@ static struct size_extrema find_unresolved_small_tuples(struct hashcontext *ctx,
 
 		const char *s = "#############################################";
 		if (j <= max_occuring) {
-			uint len = count * strlen(s) / max;
+			uint len = count * strlen(s) / max_count;
 			if (count && len == 0) {
 				s = ":";
 				len = 1;
