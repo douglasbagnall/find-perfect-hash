@@ -236,7 +236,7 @@ static uint test_params(struct hashcontext *ctx,
 }
 
 
-static void describe_hash(struct hashcontext *ctx,
+static uint describe_hash(struct hashcontext *ctx,
 			  struct multi_rot *c)
 {
 	int i, j;
@@ -280,6 +280,7 @@ static void describe_hash(struct hashcontext *ctx,
 		       MR_MUL(x), MR_ROT(x), mask);
 	}
 	printf("\033[00m\n");
+	return collisions;
 }
 
 static uint test_params_running(struct hashcontext *ctx,
@@ -527,7 +528,8 @@ struct size_extrema {
 static struct size_extrema find_unresolved_small_tuples(struct hashcontext *ctx,
 							uint64_t *params, uint n,
 							struct hash_tuples *dest,
-							uint max_size)
+							uint max_size,
+							bool silent)
 {
 	uint j;
 	uint32_t hash_mask = (1 << ctx->bits) - 1;
@@ -550,7 +552,7 @@ static struct size_extrema find_unresolved_small_tuples(struct hashcontext *ctx,
 		struct hash_big_tuple *p = &tuples[hash];
 		if (p->n < max_size) {
 			p->array[p->n] = raw;
-		} else {
+		} else if (! silent) {
 			printf("\033[01;31mmore than %u collisions for hash %x"
 			       "\033[00m\n\n", p->n, hash);
 		}
@@ -561,8 +563,10 @@ static struct size_extrema find_unresolved_small_tuples(struct hashcontext *ctx,
 		uint count = MIN(tuples[j].n, max_size + 1);
 		size_counts[count]++;
 	}
-	printf("%4u empty buckets\n", size_counts[0]);
-	printf("%4u singletons\n", size_counts[1]);
+	if (! silent) {
+		printf("%4u empty buckets\n", size_counts[0]);
+		printf("%4u singletons\n", size_counts[1]);
+	}
 	bool started = false;
 	uint max_count = 1;
 	uint64_t sum = 0;
@@ -585,7 +589,7 @@ static struct size_extrema find_unresolved_small_tuples(struct hashcontext *ctx,
 		n_tuples += count;
 
 		const char *s = "#############################################";
-		if (j <= max_occuring) {
+		if (j <= max_occuring && ! silent) {
 			uint len = count * strlen(s) / max_count;
 			if (count && len == 0) {
 				s = ":";
@@ -599,9 +603,10 @@ static struct size_extrema find_unresolved_small_tuples(struct hashcontext *ctx,
 			size_bounds.max = j;
 		}
 	}
-	printf("%4u tuples of size > %u\n", size_counts[max_size + 1],
-	       max_occuring);
-
+	if (! silent) {
+		printf("%4u tuples of size > %u\n", size_counts[max_size + 1],
+		       max_occuring);
+	}
 	size_bounds.mean = (sum + (n_tuples / 2)) / n_tuples;
 
 	dest->tuples[0] = (struct tuple_list){NULL, 0};
@@ -624,7 +629,7 @@ static struct size_extrema find_unresolved_small_tuples(struct hashcontext *ctx,
 		tl->n++;
 	}
 	for (j = 2; j <= max_size; j++) {
-		if (size_counts[j] != dest->tuples[j].n) {
+		if (size_counts[j] != dest->tuples[j].n && ! silent) {
 			printf("expected %u %u-tuples, got %u\n",
 			       size_counts[j], j, dest->tuples[j].n);
 		}
@@ -692,7 +697,7 @@ static uint do_squashing_round(struct hashcontext *ctx,
 	max = MIN(max, MAX_SMALL_TUPLE);
 	struct size_extrema size_bounds = find_unresolved_small_tuples(ctx, params,
 								       n, &tuples,
-								       max);
+								       max, false);
 	min = size_bounds.min;
 	max = size_bounds.max;
 	mean = size_bounds.mean;
@@ -807,7 +812,7 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 	uint n_bits = n + BASE_N - 1;
 	uint64_t past_triples = 0;
 	struct size_extrema size_bounds = find_unresolved_small_tuples(ctx, params, n,
-								       &tuples, 4);
+								       &tuples, 4, false);
 	if (size_bounds.max > 4) {
 		printf(C_RED "max size %u\n" C_NORMAL, size_bounds.max);
 		return UINT_MAX;
@@ -929,7 +934,7 @@ static uint do_last_round(struct hashcontext *ctx,
 	struct hash_tuples tuples;
 
 	find_unresolved_small_tuples(ctx, params, N_PARAMS - 1,
-				     &tuples, 2);
+				     &tuples, 2, false);
 
 	struct tuple_list pairs = tuples.tuples[2];
 
@@ -1095,41 +1100,58 @@ static void retry(struct hashcontext *ctx,
 	uint i;
 	struct hash_tuples tuples;
 	static struct size_extrema stats;
-	uint worst_tuple_size = 0;
-	uint worst_param = 0;
 
-	for (i = 1; i < N_PARAMS - 2; i++) {
-		reorder_params(c, i, N_PARAMS - 1);
+
+	uint target = describe_hash(ctx, c);
+
+	for (i = 0; i < 100; i++) {
+		uint j = rand_range(ctx->rng, 1, N_PARAMS - 2);
+		reorder_params(c, j, N_PARAMS - 1);
+		uint64_t victim = params[N_PARAMS - 1];
+		update_running_hash(ctx, params, N_PARAMS - 1);
 
 		stats = find_unresolved_small_tuples(ctx, params, N_PARAMS - 1,
-						     &tuples, 0);
-		if (stats.max > worst_tuple_size) {
-			worst_tuple_size = stats.max;
-			worst_param = i;
-		}
+						     &tuples, 0, true);
 		free_tuple_data(&tuples);
 
-		reorder_params(c, i, N_PARAMS - 1);
+		START_TIMER(retry);
+		if (stats.max == 2) {
+			do_last_round(ctx, c, attempts);
+		} else if (stats.max == 3) {
+			do_penultimate_round(ctx, c, attempts, N_PARAMS - 1,
+					     target * 2);
+		} else {
+			do_squashing_round(ctx, c, attempts, N_PARAMS - 1,
+					   stats.max, target * 3);
+		}
+
+		uint score = describe_hash(ctx, c);
+		if (score >= target) {
+			if (params[N_PARAMS - 1] != victim) {
+				printf("score %u, target %u, but victim has changed! "
+				       "(%lx not %lx)\n", score, target,
+				       params[N_PARAMS - 1], victim);
+				params[N_PARAMS - 1] = victim;
+			}
+			reorder_params(c, j, N_PARAMS - 1);
+		} else {
+			printf("new best score %u; param %lx\n", score,
+				params[N_PARAMS - 1]);
+			target = score;
+		}
+
+		uint target2 = describe_hash(ctx, c);
+		if (target2 != target) {
+			printf(C_MAGENTA
+			       "target mismatch; expected %u, got %u\n"
+			       C_NORMAL,
+			       target, target2);
+			return;
+		}
+
+		PRINT_TIMER(retry);
 		printf(C_GREEN "---------------------\n" C_NORMAL);
 	}
-
-	reorder_params(c, worst_param, N_PARAMS - 1);
-	update_running_hash(ctx, params, N_PARAMS - 1);
-
-	START_TIMER(retry);
-	if (worst_tuple_size == 2) {
-		c->collisions = do_last_round(ctx, c, attempts);
-	} else if (worst_tuple_size == 3) {
-		do_penultimate_round(ctx, c, attempts, N_PARAMS,
-				     c->collisions);
-	} else {
-		do_squashing_round(ctx, c, attempts, N_PARAMS,
-				   worst_tuple_size, c->collisions);
-	}
-	
-	reorder_params(c, worst_param, N_PARAMS - 1);
-
-	PRINT_TIMER(retry);
 }
 
 static void init_multi_rot(struct hashcontext *ctx,
