@@ -25,6 +25,8 @@
 #define C_GREY  "\033[00;37m"
 #define C_WHITE  "\033[01;37m"
 
+#define COLOUR(c, s) c s C_NORMAL
+
 #ifndef MAX
 #define MAX(a, b)  (((a) >= (b)) ? (a) : (b))
 #endif

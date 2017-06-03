@@ -203,7 +203,7 @@ static bool reorder_params(struct multi_rot *c, uint a, uint b)
 	       r1, e1, n1);
 	printf("param 2 original rotate %lu effective %lu, new %lu\n",
 	       r2, e2, n2);
-	
+
 	uint64_t new1 = n1 * MR_ROT_STEP;
 	uint64_t new2 = n2 * MR_ROT_STEP;
 
@@ -237,7 +237,8 @@ static uint test_params(struct hashcontext *ctx,
 
 
 static uint describe_hash(struct hashcontext *ctx,
-			  struct multi_rot *c)
+			  struct multi_rot *c,
+			  struct multi_rot *c2)
 {
 	int i, j;
 
@@ -257,18 +258,18 @@ static uint describe_hash(struct hashcontext *ctx,
 	printf("\033[00mbits: ");
 	for (i = 0; i < N_PARAMS; i++) {
 		uint64_t x = c->params[i];
-		uint64_t masked = x  & ~MR_ROT_MASK;
+		uint64_t mul = MR_MUL(x);
 		uint mask = MR_MASK(i);
 		if (i) {
 			printf("\033[01;34m ^ ");
 		}
-
 		bool duplicate = false;
-		for (j = 0; j < N_PARAMS; j++) {
-			if (i != j &&
-			    masked == (c->params[j] & ~MR_ROT_MASK)) {
-				duplicate = true;
-				break;
+		if (c2 != NULL) {
+			for (j = 1; j < N_PARAMS; j++) {
+				if (mul == MR_MUL(c2->params[j])) {
+					duplicate = true;
+					break;
+				}
 			}
 		}
 		if (duplicate) {
@@ -277,7 +278,7 @@ static uint describe_hash(struct hashcontext *ctx,
 			printf("\033[01;%dm", 36 + (i != 0));
 		}
 		printf("×%015lx ↻%-2lu & %04x ",
-		       MR_MUL(x), MR_ROT(x), mask);
+		       mul, MR_ROT(x), mask);
 	}
 	printf("\033[00m\n");
 	return collisions;
@@ -595,8 +596,8 @@ static struct size_extrema find_unresolved_small_tuples(struct hashcontext *ctx,
 				s = ":";
 				len = 1;
 			}
-			printf("%4u tuples of size %-2u " C_DARK_YELLOW
-			       "%.*s\n" C_NORMAL, count, j,
+			printf("%4u tuples of size %-2u "
+			       COLOUR(C_DARK_YELLOW, "%.*s\n"), count, j,
 			       len, s);
 		}
 		if (count) {
@@ -786,7 +787,7 @@ static uint do_squashing_round(struct hashcontext *ctx,
 	printf("short_cuts: %lu\n", short_cuts);
 	params[n] = best_param;
 	PRINT_TIMER(squashing);
-	uint best_collisions = test_params_running(ctx, params, n,
+	uint best_collisions = test_params_running(ctx, params, n + 1,
 						   UINT_MAX);
 	printf("best score %u; collisions %u\n",
 	       best_score, best_collisions);
@@ -814,7 +815,7 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 	struct size_extrema size_bounds = find_unresolved_small_tuples(ctx, params, n,
 								       &tuples, 4, false);
 	if (size_bounds.max > 4) {
-		printf(C_RED "max size %u\n" C_NORMAL, size_bounds.max);
+		printf(COLOUR(C_RED, "max size %u\n"), size_bounds.max);
 		return UINT_MAX;
 	}
 
@@ -1100,33 +1101,46 @@ static void retry(struct hashcontext *ctx,
 	uint i;
 	struct hash_tuples tuples;
 	static struct size_extrema stats;
+	struct multi_rot orig = *c;
+	orig.params = calloc(N_PARAMS, sizeof(uint64_t));
+	memcpy(orig.params, c->params, N_PARAMS * sizeof(uint64_t));
 
+	uint target = describe_hash(ctx, c, NULL);
 
-	uint target = describe_hash(ctx, c);
-
-	for (i = 0; i < 100; i++) {
-		uint j = rand_range(ctx->rng, 1, N_PARAMS - 2);
+	for (i = 0; i < 1000; i++) {
+		uint j = rand_range(ctx->rng, 1, N_PARAMS - 1);
 		reorder_params(c, j, N_PARAMS - 1);
 		uint64_t victim = params[N_PARAMS - 1];
+
+		START_TIMER(retry);
+
 		update_running_hash(ctx, params, N_PARAMS - 1);
 
 		stats = find_unresolved_small_tuples(ctx, params, N_PARAMS - 1,
 						     &tuples, 0, true);
 		free_tuple_data(&tuples);
 
-		START_TIMER(retry);
+		printf(COLOUR(C_GREEN,
+			      "-------- round %u ---------------------\n"),
+		       i);
+
 		if (stats.max == 2) {
-			do_last_round(ctx, c, attempts);
+			c->collisions = do_last_round(ctx, c, attempts * 3);
+#if 0
 		} else if (stats.max == 3) {
-			do_penultimate_round(ctx, c, attempts, N_PARAMS - 1,
-					     target * 2);
+			c->collisions = do_penultimate_round(ctx, c, attempts / 3,
+							     N_PARAMS - 1,
+							     target * 2);
+#endif
 		} else {
-			do_squashing_round(ctx, c, attempts, N_PARAMS - 1,
-					   stats.max, target * 3);
+			c->collisions = do_squashing_round(ctx, c, attempts,
+							   N_PARAMS - 1,
+							   stats.max,
+							   target * 3);
 		}
 
-		uint score = describe_hash(ctx, c);
-		if (score >= target) {
+		uint score = describe_hash(ctx, c, &orig);
+		if (score > target) {
 			if (params[N_PARAMS - 1] != victim) {
 				printf("score %u, target %u, but victim has changed! "
 				       "(%lx not %lx)\n", score, target,
@@ -1134,23 +1148,23 @@ static void retry(struct hashcontext *ctx,
 				params[N_PARAMS - 1] = victim;
 			}
 			reorder_params(c, j, N_PARAMS - 1);
+			c->collisions = target;
 		} else {
-			printf("new best score %u; param %lx\n", score,
-				params[N_PARAMS - 1]);
+			printf(COLOUR(C_CYAN,
+				      "new best score %u; param %lx\n"),
+			       score, params[N_PARAMS - 1]);
 			target = score;
 		}
 
-		uint target2 = describe_hash(ctx, c);
+		uint target2 = describe_hash(ctx, c, &orig);
 		if (target2 != target) {
-			printf(C_MAGENTA
-			       "target mismatch; expected %u, got %u\n"
-			       C_NORMAL,
+			printf(COLOUR(C_MAGENTA,
+				      "target mismatch; expected %u, got %u\n"),
 			       target, target2);
 			return;
 		}
 
 		PRINT_TIMER(retry);
-		printf(C_GREEN "---------------------\n" C_NORMAL);
 	}
 }
 
@@ -1240,7 +1254,7 @@ static int find_hash(const char *filename, uint bits,
 
 	struct hashcontext *ctx2 = new_context(filename, bits, rng);
 
-	describe_hash(ctx2, &c);
+	describe_hash(ctx2, &c, NULL);
 	free(c.params);
 	free_context(ctx);
 	free_context(ctx2);
