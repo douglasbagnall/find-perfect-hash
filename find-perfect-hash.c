@@ -182,7 +182,6 @@ static inline void update_running_hash(struct hashcontext *ctx,
 static bool reorder_params(struct multi_rot *c, uint a, uint b)
 {
 	if (a == b) {
-		printf("reordering no-op: %u %u\n", a, b);
 		return true;
 	}
 	uint64_t *params = c->params;
@@ -192,19 +191,8 @@ static bool reorder_params(struct multi_rot *c, uint a, uint b)
 	uint64_t mul2 = p2 & ~MR_ROT_MASK;
 	uint64_t r1 = MR_ROT(p1);
 	uint64_t r2 = MR_ROT(p2);
-	uint64_t e1 = r1 - a;
-	uint64_t e2 = r2 - b;
 	uint64_t n1 = (r1 - a + b) & 63;
 	uint64_t n2 = (r2 - b + a) & 63;
-
-	printf("reordering %u %u (e %lu, %lu) r1 %lu r2 %lu\n",
-	       a, b, e1, e2, r1, r2);
-
-	printf("param 1 original rotate %lu effective %lu, new %lu\n",
-	       r1, e1, n1);
-	printf("param 2 original rotate %lu effective %lu, new %lu\n",
-	       r2, e2, n2);
-
 	uint64_t new1 = n1 * MR_ROT_STEP;
 	uint64_t new2 = n2 * MR_ROT_STEP;
 
@@ -235,31 +223,58 @@ static uint test_params(struct hashcontext *ctx,
 	return collisions;
 }
 
+static uint test_params_l2(struct hashcontext *ctx,
+			   uint64_t *params, uint n)
+{
+	int j;
+	uint16_t *hits = ctx->hits;
+	uint64_t c2 = 0;
+	uint n_bits = n + BASE_N - 1;
+	uint16_t worst = 0;
+	for (j = 0; j < ctx->n; j++) {
+		uint32_t hash = unmasked_hash(ctx->data[j].raw_hash,
+					      params, n);
+#if BITS_PER_PARAM > 1
+		hash &= (1 << ctx->bits) - 1;
+#endif
+		uint16_t h = hits[hash];
+		c2 += h;
+		h++;
+		worst = MAX(h, worst);
+		hits[hash] = h;
+	}
+	uint64_t w = worst;
+	uint64_t score = c2 + w * w * w;
+
+	memset(hits, 0, (1 << n_bits) * sizeof(hits[0]));
+	return score;
+}
+
+
 static uint find_worst_param(struct hashcontext *ctx,
 			     struct multi_rot *c,
 			     uint n_params)
 {
-	uint i, collisions;
+	uint i, score;
 	uint worst_param = 1;
-	uint best_collisions = UINT_MAX;
-	uint full_collisions = test_params(ctx, c->params, n_params);
-	printf("with %u params: %u collisions\n", n_params,
-	       full_collisions);
+	uint best_score = UINT_MAX;
+	uint full_score = test_params(ctx, c->params, n_params);
+	printf("with %u params: %u score\n", n_params,
+	       full_score);
 
 	for (i = 1; i < n_params; i++) {
-		uint64_t p = c->params[i];
-		c->params[i] = 0;
-		collisions = test_params(ctx, c->params, n_params - 1);
-		printf("without %2u: %4u collisions gain %u\n", i,
-		       collisions, collisions - full_collisions);
-		if (collisions < best_collisions) {
-			best_collisions = collisions;
+		reorder_params(c, i, n_params - 1);
+		score = test_params_l2(ctx, c->params, n_params - 1);
+		printf("without %2u: %4u score gain %u\n", i,
+		       score, score - full_score);
+		if (score < best_score) {
+			best_score = score;
 			worst_param = i;
 		}
-		c->params[i] = p;
+		reorder_params(c, i, n_params - 1);
 	}
-	printf("worst is %2u: %4u collisions, gain %u\n", worst_param,
-	       best_collisions,  best_collisions - full_collisions);
+	printf("worst is %2u: %4u score, gain %u\n", worst_param,
+	       best_score,  best_score - full_score);
 	return worst_param;
 }
 
@@ -381,6 +396,7 @@ static uint64_t test_params_with_l2_running(struct hashcontext *ctx,
 
 	return score;
 }
+
 
 
 static uint find_non_colliding_strings(struct hashcontext *ctx,
@@ -1138,7 +1154,9 @@ static void retry(struct hashcontext *ctx,
 	orig.params = calloc(N_PARAMS, sizeof(uint64_t));
 	memcpy(orig.params, c->params, N_PARAMS * sizeof(uint64_t));
 
-	uint target = describe_hash(ctx, c, NULL, n_params);
+	uint target = test_params_l2(ctx, c->params, n_params);
+	uint worsts[n_params];
+	memset(worsts, 0, sizeof(worsts));
 
 	for (i = 0; i < rounds; i++) {
 		printf(COLOUR(C_GREEN,
@@ -1146,6 +1164,7 @@ static void retry(struct hashcontext *ctx,
 		       i);
 
 		uint j = find_worst_param(ctx, c, n_params);
+		worsts[j]++;
 		reorder_params(c, j, n_params - 1);
 		uint64_t victim = params[n_params - 1];
 
@@ -1178,10 +1197,11 @@ static void retry(struct hashcontext *ctx,
 							   target * 3);
 		}
 
-		uint score = describe_hash(ctx, c, &orig, n_params);
+		uint collisions = describe_hash(ctx, c, &orig, n_params);
+		uint score = test_params_l2(ctx, c->params, n_params);
 		if (score > target) {
-			printf("collisions %u, target %u\n", score,
-			       target);
+			printf("collisions %u, score %u target %u\n",
+			       collisions, score, target);
 			params[n_params - 1] = victim;
 			c->collisions = target;
 		} else {
@@ -1192,7 +1212,7 @@ static void retry(struct hashcontext *ctx,
 		}
 		reorder_params(c, j, n_params - 1);
 
-		uint target2 = describe_hash(ctx, c, &orig, n_params);
+		uint target2 = test_params_l2(ctx, c->params, n_params);
 		if (target2 != target) {
 			printf(COLOUR(C_MAGENTA,
 				      "target mismatch; expected %u, got %u\n"),
@@ -1202,7 +1222,13 @@ static void retry(struct hashcontext *ctx,
 
 		PRINT_TIMER(retry);
 	}
+	describe_hash(ctx, c, &orig, n_params);
+
+	for (i = 0; i < n_params; i++) {
+		printf("param %u was worst %u times\n", i, worsts[i]);
+	}
 	free(orig.params);
+
 }
 
 static void init_multi_rot(struct hashcontext *ctx,
@@ -1230,7 +1256,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 		}
 	}
 
-	retry(ctx, c, n_candidates, N_PARAMS - 2, 100, 6, false);
+	retry(ctx, c, n_candidates * 2, N_PARAMS - 2, 10, 6, false);
 
 	worst = find_non_colliding_strings(ctx, params, N_PARAMS - 2, false);
 	if (worst > 4) {
@@ -1240,9 +1266,9 @@ static void init_multi_rot(struct hashcontext *ctx,
 
 	/* special cases for the last two rounds */
 	attempts = (uint64_t)n_candidates * original_n_strings / ctx->n;
-	do_penultimate_round(ctx, c, attempts, N_PARAMS - 2, UINT_MAX);
+	do_penultimate_round(ctx, c, attempts * 2, N_PARAMS - 2, UINT_MAX);
 
-	retry(ctx, c, n_candidates, N_PARAMS - 1, 100, 4, true);
+	//retry(ctx, c, n_candidates, N_PARAMS - 1, 100, 4, true);
 
 	c->collisions = do_last_round(ctx, c, attempts);
 }
