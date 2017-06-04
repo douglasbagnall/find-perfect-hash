@@ -182,6 +182,7 @@ static inline void update_running_hash(struct hashcontext *ctx,
 static bool reorder_params(struct multi_rot *c, uint a, uint b)
 {
 	if (a == b) {
+		printf("reordering no-op: %u %u\n", a, b);
 		return true;
 	}
 	uint64_t *params = c->params;
@@ -212,7 +213,6 @@ static bool reorder_params(struct multi_rot *c, uint a, uint b)
 	return true;
 }
 
-
 static uint test_params(struct hashcontext *ctx,
 			uint64_t *params, uint n)
 {
@@ -235,17 +235,46 @@ static uint test_params(struct hashcontext *ctx,
 	return collisions;
 }
 
+static uint find_worst_param(struct hashcontext *ctx,
+			     struct multi_rot *c,
+			     uint n_params)
+{
+	uint i, collisions;
+	uint worst_param = 1;
+	uint best_collisions = UINT_MAX;
+	uint full_collisions = test_params(ctx, c->params, n_params);
+	printf("with %u params: %u collisions\n", n_params,
+	       full_collisions);
+
+	for (i = 1; i < n_params; i++) {
+		uint64_t p = c->params[i];
+		c->params[i] = 0;
+		collisions = test_params(ctx, c->params, n_params - 1);
+		printf("without %2u: %4u collisions gain %u\n", i,
+		       collisions, collisions - full_collisions);
+		if (collisions < best_collisions) {
+			best_collisions = collisions;
+			worst_param = i;
+		}
+		c->params[i] = p;
+	}
+	printf("worst is %2u: %4u collisions, gain %u\n", worst_param,
+	       best_collisions,  best_collisions - full_collisions);
+	return worst_param;
+}
+
 
 static uint describe_hash(struct hashcontext *ctx,
 			  struct multi_rot *c,
-			  struct multi_rot *c2)
+			  struct multi_rot *c2,
+			  uint n_params)
 {
 	int i, j;
 
 	printf("bits %u mask %x\n", ctx->bits,
 	       (1 << ctx->bits) - 1);
 
-	uint collisions = test_params(ctx, c->params, N_PARAMS);
+	uint collisions = test_params(ctx, c->params, n_params);
 
 	if (collisions != c->collisions) {
 		printf("\033[01;31m collisions mismatch! \033[00m\n"
@@ -256,7 +285,7 @@ static uint describe_hash(struct hashcontext *ctx,
 	};
 	printf("collisions %-3u ", collisions);
 	printf("\033[00mbits: ");
-	for (i = 0; i < N_PARAMS; i++) {
+	for (i = 0; i < n_params; i++) {
 		uint64_t x = c->params[i];
 		uint64_t mul = MR_MUL(x);
 		uint mask = MR_MASK(i);
@@ -265,7 +294,7 @@ static uint describe_hash(struct hashcontext *ctx,
 		}
 		bool duplicate = false;
 		if (c2 != NULL) {
-			for (j = 1; j < N_PARAMS; j++) {
+			for (j = 1; j < n_params; j++) {
 				if (mul == MR_MUL(c2->params[j])) {
 					duplicate = true;
 					break;
@@ -392,7 +421,7 @@ static uint find_non_colliding_strings(struct hashcontext *ctx,
 		       "leaving %u\n",
 		       n, n_bits, j - k, k);
 	} else {
-		printf("Done %d params (%d bits), not dropping uinque strings\n",
+		printf("Done %d params (%d bits), not dropping unique strings\n",
 		       n, n_bits);
 	}
 	printf("worst is %u; best is %u\n", worst, best);
@@ -1095,7 +1124,11 @@ static void do_l2_round(struct hashcontext *ctx,
 
 static void retry(struct hashcontext *ctx,
 		  struct multi_rot *c,
-		  uint attempts)
+		  uint attempts,
+		  uint n_params,
+		  uint rounds,
+		  uint max_tuple_size,
+		  bool do_penultimate)
 {
 	uint64_t *params = c->params;
 	uint i;
@@ -1105,58 +1138,61 @@ static void retry(struct hashcontext *ctx,
 	orig.params = calloc(N_PARAMS, sizeof(uint64_t));
 	memcpy(orig.params, c->params, N_PARAMS * sizeof(uint64_t));
 
-	uint target = describe_hash(ctx, c, NULL);
+	uint target = describe_hash(ctx, c, NULL, n_params);
 
-	for (i = 0; i < 1000; i++) {
-		uint j = rand_range(ctx->rng, 1, N_PARAMS - 1);
-		reorder_params(c, j, N_PARAMS - 1);
-		uint64_t victim = params[N_PARAMS - 1];
-
-		START_TIMER(retry);
-
-		update_running_hash(ctx, params, N_PARAMS - 1);
-
-		stats = find_unresolved_small_tuples(ctx, params, N_PARAMS - 1,
-						     &tuples, 0, true);
-		free_tuple_data(&tuples);
-
+	for (i = 0; i < rounds; i++) {
 		printf(COLOUR(C_GREEN,
 			      "-------- round %u ---------------------\n"),
 		       i);
 
+		uint j = find_worst_param(ctx, c, n_params);
+		reorder_params(c, j, n_params - 1);
+		uint64_t victim = params[n_params - 1];
+
+		START_TIMER(retry);
+
+		update_running_hash(ctx, params, n_params - 1);
+
+		stats = find_unresolved_small_tuples(ctx, params, n_params - 1,
+						     &tuples, 0, true);
+		free_tuple_data(&tuples);
+
+		if (stats.max > max_tuple_size) {
+			printf(COLOUR(C_RED,
+				      "SKIPPING max tuple %u\n"), stats.max);
+			reorder_params(c, j, n_params - 1);
+			continue;
+		}
 		if (stats.max == 2) {
-			c->collisions = do_last_round(ctx, c, attempts * 3);
-#if 0
-		} else if (stats.max == 3) {
-			c->collisions = do_penultimate_round(ctx, c, attempts / 3,
-							     N_PARAMS - 1,
+			c->collisions = do_last_round(ctx, c, attempts);
+#if 1
+		} else if (stats.max <= 4 && do_penultimate) {
+			c->collisions = do_penultimate_round(ctx, c, attempts * 2,
+							     n_params - 1,
 							     target * 2);
 #endif
 		} else {
-			c->collisions = do_squashing_round(ctx, c, attempts,
-							   N_PARAMS - 1,
+			c->collisions = do_squashing_round(ctx, c, attempts * 2,
+							   n_params - 1,
 							   stats.max,
 							   target * 3);
 		}
 
-		uint score = describe_hash(ctx, c, &orig);
+		uint score = describe_hash(ctx, c, &orig, n_params);
 		if (score > target) {
-			if (params[N_PARAMS - 1] != victim) {
-				printf("score %u, target %u, but victim has changed! "
-				       "(%lx not %lx)\n", score, target,
-				       params[N_PARAMS - 1], victim);
-				params[N_PARAMS - 1] = victim;
-			}
-			reorder_params(c, j, N_PARAMS - 1);
+			printf("collisions %u, target %u\n", score,
+			       target);
+			params[n_params - 1] = victim;
 			c->collisions = target;
 		} else {
 			printf(COLOUR(C_CYAN,
 				      "new best score %u; param %lx\n"),
-			       score, params[N_PARAMS - 1]);
+			       score, params[n_params - 1]);
 			target = score;
 		}
+		reorder_params(c, j, n_params - 1);
 
-		uint target2 = describe_hash(ctx, c, &orig);
+		uint target2 = describe_hash(ctx, c, &orig, n_params);
 		if (target2 != target) {
 			printf(COLOUR(C_MAGENTA,
 				      "target mismatch; expected %u, got %u\n"),
@@ -1166,6 +1202,7 @@ static void retry(struct hashcontext *ctx,
 
 		PRINT_TIMER(retry);
 	}
+	free(orig.params);
 }
 
 static void init_multi_rot(struct hashcontext *ctx,
@@ -1179,26 +1216,34 @@ static void init_multi_rot(struct hashcontext *ctx,
 	uint64_t *params = c->params;
 	update_running_hash(ctx, params, 0);
 
-	for (i = 0; i < N_PARAMS - 2; i++) {
+	do_l2_round(ctx, c, n_candidates * 10, 0);
+
+	for (i = 1; i < N_PARAMS - 2; i++) {
 		attempts = (uint64_t)n_candidates * original_n_strings / ctx->n;
+		worst = find_non_colliding_strings(ctx, params, i, false);
 
 		if (worst > MAX_SMALL_TUPLE) {
 			do_l2_round(ctx, c, attempts, i);
 		} else {
-			printf("small tuple squashing\n");
 			do_squashing_round(ctx, c, attempts, i,
 					   worst, UINT_MAX);
 		}
-		worst = find_non_colliding_strings(ctx, params, i + 1, false);
 	}
 
-	/* try extra hard for the last two rounds */
+	retry(ctx, c, n_candidates, N_PARAMS - 2, 100, 6, false);
+
+	worst = find_non_colliding_strings(ctx, params, N_PARAMS - 2, false);
 	if (worst > 4) {
 		printf("the situation is hopeless. stopping\n");
 		return;
 	}
+
+	/* special cases for the last two rounds */
 	attempts = (uint64_t)n_candidates * original_n_strings / ctx->n;
 	do_penultimate_round(ctx, c, attempts, N_PARAMS - 2, UINT_MAX);
+
+	retry(ctx, c, n_candidates, N_PARAMS - 1, 100, 4, true);
+
 	c->collisions = do_last_round(ctx, c, attempts);
 }
 
@@ -1250,11 +1295,11 @@ static int find_hash(const char *filename, uint bits,
 	c.params = calloc(N_PARAMS, sizeof(uint64_t));
 	c.collisions = UINT_MAX;
 	init_multi_rot(ctx, &c, n_candidates);
-	retry(ctx, &c, n_candidates);
+	//retry(ctx, &c, n_candidates);
 
 	struct hashcontext *ctx2 = new_context(filename, bits, rng);
 
-	describe_hash(ctx2, &c, NULL);
+	describe_hash(ctx2, &c, NULL, N_PARAMS);
 	free(c.params);
 	free_context(ctx);
 	free_context(ctx2);
