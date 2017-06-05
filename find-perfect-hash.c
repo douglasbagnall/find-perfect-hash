@@ -20,7 +20,6 @@ struct hashcontext {
 	uint bits;
 	struct rng *rng;
 	char *string_mem;
-	uint n_params;
 };
 
 struct multi_rot {
@@ -44,6 +43,8 @@ struct hash_tuples {
 	uint max_size;
 };
 
+
+uint N_PARAMS = 0;
 
 //#define FNV 1099511628211UL
 #define FNV 16777619
@@ -1017,7 +1018,7 @@ static uint do_last_round(struct hashcontext *ctx,
 	uint64_t *params = c->params;
 	struct hash_tuples tuples;
 
-	find_unresolved_small_tuples(ctx, params, ctx->n_params - 1,
+	find_unresolved_small_tuples(ctx, params, N_PARAMS - 1,
 				     &tuples, 2, false);
 
 	struct tuple_list pairs = tuples.tuples[2];
@@ -1043,13 +1044,13 @@ static uint do_last_round(struct hashcontext *ctx,
 		 */
 		for (j = 0; j < exact_attempts; j++) {
 			/* we don't need to calculate the full hash */
-			uint64_t p = next_param(ctx->rng, j, params, ctx->n_params);
+			uint64_t p = next_param(ctx->rng, j, params, N_PARAMS);
 			uint64_t non_collisions = (uint64_t)-1ULL;
 			for (i = 0; i < pairs.n; i++) {
 				uint64_t raw_a = pairs.raw[i * 2];
 				uint64_t raw_b = pairs.raw[i * 2 + 1];
 				uint64_t rot_map = test_pair_all_rot(p, raw_a, raw_b,
-								     ctx->n_params);
+								     N_PARAMS);
 
 				non_collisions &= rot_map;
 				if (non_collisions) {
@@ -1070,7 +1071,7 @@ static uint do_last_round(struct hashcontext *ctx,
 				p &= ~MR_ROT_MASK;
 				for (i = 0; i < 64; i++) {
 					collisions = test_all_pairs(p, pairs,
-								    ctx->n_params);
+								    N_PARAMS);
 
 					if (collisions == 0) {
 						best_param = p;
@@ -1096,8 +1097,8 @@ static uint do_last_round(struct hashcontext *ctx,
 
 	for (j = 0; j < attempts; j++) {
 		/* we don't need to calculate the full hash */
-		uint64_t p = next_param(ctx->rng, j, params, ctx->n_params);
-		collisions = test_all_pairs_all_rot(&p, pairs, ctx->n_params,
+		uint64_t p = next_param(ctx->rng, j, params, N_PARAMS);
+		collisions = test_all_pairs_all_rot(&p, pairs, N_PARAMS,
 						    best_collisions, 0);
 
 		if (collisions < best_collisions) {
@@ -1112,9 +1113,9 @@ static uint do_last_round(struct hashcontext *ctx,
 		}
 	}
   win:
-	params[ctx->n_params - 1] = best_param;
+	params[N_PARAMS - 1] = best_param;
 	PRINT_TIMER(last);
-	best_collisions = test_params_running(ctx, params, ctx->n_params,
+	best_collisions = test_params_running(ctx, params, N_PARAMS,
 					      best_collisions);
 
 	free_tuple_data(&tuples);
@@ -1189,8 +1190,8 @@ static void retry(struct hashcontext *ctx,
 	struct hash_tuples tuples;
 	static struct size_extrema stats;
 	struct multi_rot orig = *c;
-	orig.params = calloc(ctx->n_params, sizeof(uint64_t));
-	memcpy(orig.params, c->params, ctx->n_params * sizeof(uint64_t));
+	orig.params = calloc(N_PARAMS, sizeof(uint64_t));
+	memcpy(orig.params, c->params, N_PARAMS * sizeof(uint64_t));
 
 	uint target = test_params_l2(ctx, c->params, n_params);
 	uint worsts[n_params];
@@ -1296,7 +1297,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 
 	do_l2_round(ctx, c, n_candidates * 20, 0);
 
-	for (i = 1; i < ctx->n_params - 2; i++) {
+	for (i = 1; i < N_PARAMS - 2; i++) {
 		attempts = (uint64_t)n_candidates * original_n_strings / ctx->n;
 		worst = find_non_colliding_strings(ctx, params, i, false);
 
@@ -1308,9 +1309,9 @@ static void init_multi_rot(struct hashcontext *ctx,
 		}
 	}
 
-	//retry(ctx, c, n_candidates * 2, ctx->n_params - 2, 10, 8, false);
+	retry(ctx, c, n_candidates * 2, N_PARAMS - 2, 10, 8, false);
 
-	worst = find_non_colliding_strings(ctx, params, ctx->n_params - 2, false);
+	worst = find_non_colliding_strings(ctx, params, N_PARAMS - 2, false);
 	if (worst > 4) {
 		printf("the situation is hopeless. stopping\n");
 		return;
@@ -1318,9 +1319,9 @@ static void init_multi_rot(struct hashcontext *ctx,
 
 	/* special cases for the last two rounds */
 	attempts = (uint64_t)n_candidates;
-	do_penultimate_round(ctx, c, attempts * 2, ctx->n_params - 2, UINT_MAX);
+	do_penultimate_round(ctx, c, attempts * 2, N_PARAMS - 2, UINT_MAX);
 
-	//retry(ctx, c, n_candidates, ctx->n_params - 1, 10, 4, true);
+	//retry(ctx, c, n_candidates, N_PARAMS - 1, 10, 4, true);
 
 	c->collisions = do_last_round(ctx, c, attempts);
 }
@@ -1335,9 +1336,9 @@ struct hashcontext *new_context(const char *filename, uint bits,
 	free(strings.strings); /* the (char**), not the (char*) */
 	struct hashcontext *ctx = malloc(sizeof(*ctx));
 
+	N_PARAMS = bits + 1 - BASE_N;
 	uint16_t *hits = calloc((1 << bits), sizeof(hits[0]));
 
-	ctx->n_params = bits + 1 - BASE_N;
 	ctx->data = data;
 	ctx->n = strings.n_strings;
 	ctx->hits = hits;
@@ -1368,14 +1369,14 @@ static int find_hash(const char *filename, uint bits,
 	}
 
 	struct multi_rot c;
-	c.params = calloc(ctx->n_params, sizeof(uint64_t));
+	c.params = calloc(N_PARAMS, sizeof(uint64_t));
 	c.collisions = UINT_MAX;
 	init_multi_rot(ctx, &c, n_candidates);
 	//retry(ctx, &c, n_candidates);
 
 	struct hashcontext *ctx2 = new_context(filename, bits, rng);
 
-	describe_hash(ctx2, &c, NULL, ctx->n_params, true);
+	describe_hash(ctx2, &c, NULL, N_PARAMS, true);
 	free(c.params);
 	free_context(ctx);
 	free_context(ctx2);
