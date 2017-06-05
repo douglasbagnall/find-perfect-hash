@@ -242,31 +242,6 @@ static uint test_params_l2(struct hashcontext *ctx,
 	return score;
 }
 
-static uint test_params_squashing(struct hashcontext *ctx,
-				  uint64_t *params, uint n)
-{
-	int j;
-	uint16_t *hits = ctx->hits;
-	uint n_bits = n + BASE_N - 1;
-	for (j = 0; j < ctx->n; j++) {
-		uint32_t hash = unmasked_hash(ctx->data[j].raw_hash,
-					      params, n);
-		hits[hash]++;
-	}
-	/* for squuashing scoring, we look at how the parent got split */
-	uint half_range = 1 << (n - 1);
-	uint score = 0;
-	for (j = 0; j < half_range; j++) {
-		uint a = hits[j];
-		uint b = hits[j + half_range];
-		uint target = (a + b + 1) / 2;
-		uint e = MAX(a, b) - target;
-		score += e * e * e;
-	}
-	memset(hits, 0, (1 << n_bits) * sizeof(hits[0]));
-	return score;
-}
-
 
 static uint find_worst_param(struct hashcontext *ctx,
 			     struct multi_rot *c,
@@ -277,15 +252,16 @@ static uint find_worst_param(struct hashcontext *ctx,
 	uint worst_param = 1;
 	uint sum = 0;
 	uint best_score = UINT_MAX;
-	uint full_score = test_params_squashing(ctx, c->params, n_params);
+	uint full_score = test_params_l2(ctx, c->params, n_params);
 	printf("with %u params: %u score\n", n_params,
 	       full_score);
 
 	for (i = 1; i < n_params; i++) {
 		reorder_params(c, i, n_params - 1);
-		score = test_params_squashing(ctx, c->params, n_params - 1);
+		score = test_params_l2(ctx, c->params, n_params - 1);
 		sum += score;
-		printf("without %2u: %4u score\n", i, score);
+		printf("without %2u: %4u score gain %u\n", i,
+		       score, score - full_score);
 		if (score < best_score) {
 			best_score = score;
 			worst_param = i;
@@ -294,8 +270,8 @@ static uint find_worst_param(struct hashcontext *ctx,
 	}
 	*mean_score = (sum + (n_params - 1) / 2) / (n_params - 1);
 	printf("mean score: %4u\n", *mean_score);
-	printf("worst is %2u: %4u score\n", worst_param,
-	       best_score);
+	printf("worst is %2u: %4u score, gain %u\n", worst_param,
+	       best_score,  best_score - full_score);
 	return worst_param;
 }
 
@@ -815,7 +791,7 @@ static uint do_squashing_round(struct hashcontext *ctx,
 					uint x = ones[h];
 					scores[h] +=  x * x * x;
 				}
-			}
+ 			}
 			if (k < max && k > min) {
 				short_cut_exit = true;
 				for (h = 0; h < 64; h++) {
@@ -1217,7 +1193,7 @@ static void retry(struct hashcontext *ctx,
 	orig.params = calloc(N_PARAMS, sizeof(uint64_t));
 	memcpy(orig.params, c->params, N_PARAMS * sizeof(uint64_t));
 
-	uint target = test_params_squashing(ctx, c->params, n_params);
+	uint target = test_params_l2(ctx, c->params, n_params);
 	uint worsts[n_params];
 	memset(worsts, 0, sizeof(worsts));
 
@@ -1251,17 +1227,17 @@ static void retry(struct hashcontext *ctx,
 		} else if (stats.max <= 4 && do_penultimate) {
 			do_penultimate_round(ctx, c, attempts * 2,
 					     n_params - 1,
-					     UINT_MAX);
+					     target * 2);
 #endif
 		} else {
 			do_squashing_round(ctx, c, attempts * 2,
 					   n_params - 1,
 					   stats.max,
-					   UINT_MAX);
+					   target * 3);
 		}
 
 		uint collisions = describe_hash(ctx, c, &orig, n_params, false);
-		uint score = test_params_squashing(ctx, c->params, n_params);
+		uint score = test_params_l2(ctx, c->params, n_params);
 		if (score > target) {
 			printf("collisions %u, score %u target %u\n",
 			       collisions, score, target);
@@ -1289,7 +1265,7 @@ static void retry(struct hashcontext *ctx,
 		}
 		reorder_params(c, j, n_params - 1);
 
-		uint target2 = test_params_squashing(ctx, c->params, n_params);
+		uint target2 = test_params_l2(ctx, c->params, n_params);
 		if (target2 != target) {
 			printf(COLOUR(C_MAGENTA,
 				      "target mismatch; expected %u, got %u\n"),
@@ -1333,7 +1309,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 		}
 	}
 
-       retry(ctx, c, n_candidates * 2, N_PARAMS - 2, 10, 8, false);
+	retry(ctx, c, n_candidates * 2, N_PARAMS - 2, 10, 8, false);
 
 	worst = find_non_colliding_strings(ctx, params, N_PARAMS - 2, false);
 	if (worst > 4) {
