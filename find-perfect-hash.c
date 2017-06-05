@@ -225,21 +225,17 @@ static uint test_params_l2(struct hashcontext *ctx,
 	uint16_t *hits = ctx->hits;
 	uint64_t c2 = 0;
 	uint n_bits = n + BASE_N - 1;
-	uint16_t worst = 0;
 	for (j = 0; j < ctx->n; j++) {
 		uint32_t hash = unmasked_hash(ctx->data[j].raw_hash,
 					      params, n);
 		uint16_t h = hits[hash];
 		c2 += h;
 		h++;
-		worst = MAX(h, worst);
 		hits[hash] = h;
 	}
-	uint64_t w = worst;
-	uint64_t score = c2 + w * w * w;
 
 	memset(hits, 0, (1 << n_bits) * sizeof(hits[0]));
-	return score;
+	return c2;
 }
 
 
@@ -366,7 +362,6 @@ static uint64_t test_params_with_l2_running(struct hashcontext *ctx,
 	uint64_t rot = MR_ROT(param);
 	uint64_t mul = MR_MUL(param);
 	uint32_t mask = MR_MASK(n - 1);
-	uint16_t worst = 0;
 	uint n_bits = n + BASE_N - 1;
 
 	for (j = 0; j < ctx->n; j++) {
@@ -376,16 +371,13 @@ static uint64_t test_params_with_l2_running(struct hashcontext *ctx,
 		uint16_t h = hits[hash];
 		c2 += h;
 		h++;
-		worst = MAX(h, worst);
 		hits[hash] = h;
 
 	}
-	uint64_t w = worst;
-	uint64_t score = c2 + w * w * w;
 
 	memset(hits, 0, (1 << n_bits) * sizeof(hits[0]));
 
-	return score;
+	return c2;
 }
 
 
@@ -449,10 +441,11 @@ static uint64_t calc_best_error(struct hashcontext *ctx, uint n_params)
 	uint r = ctx->n % n;
 	uint min_h = q + (r ? 1 : 0);
 	uint mh = 1 << (ctx->bits - n_params - BASE_N);
+	printf("n_bits %u\n", n_bits);
 	printf("worst scores: max allowable %u; best conceivable %u\n",
 	       mh, min_h);
 	uint64_t sum = q * (n * (q - 1) + 2 * r) / 2;
-	return sum + min_h * min_h * min_h;
+	return sum;
 }
 
 static inline uint64_t next_param(struct rng *rng, uint64_t round,
@@ -460,8 +453,6 @@ static inline uint64_t next_param(struct rng *rng, uint64_t round,
 {
 	return rand64(rng);
 }
-
-
 
 
 static inline bool test_pair(uint64_t param,
@@ -606,6 +597,7 @@ static struct size_extrema find_unresolved_small_tuples(struct hashcontext *ctx,
 		} else if (! silent) {
 			printf("\033[01;31mmore than %u collisions for hash %x"
 			       "\033[00m\n\n", p->n, hash);
+			printf("n_bits %u\n", n_bits);
 		}
 		p->n++;
 	}
