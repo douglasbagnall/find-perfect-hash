@@ -1,6 +1,5 @@
 //gcc -Wall -O3 find-perfect-hash.c -o find-perfect-hash -ggdb -ffast-math -lm -march=native
 
-#define BITS_PER_PARAM 1
 #define BASE_N 4
 #define DETERMINISTIC 01
 #define MAX_SMALL_TUPLE 32
@@ -133,7 +132,7 @@ static bool check_raw_hash(struct hashcontext *ctx)
 
 #define MR_MASK(i) (((i) == 0) ?					\
 		    (1 << BASE_N) - 1 :					\
-		    ((1 << BITS_PER_PARAM) - 1) << (BASE_N + ((i) - 1) * BITS_PER_PARAM))
+		    (1 << (BASE_N + (i) - 1)))
 
 #define MR_COMPONENT(x, mul, rot, mask)(ROTATE((x * mul), rot) & mask)
 
@@ -207,19 +206,15 @@ static uint test_params(struct hashcontext *ctx,
 	int j;
 	uint collisions = 0;
 	uint64_t *hits = (uint64_t *)ctx->hits;
-	uint32_t hash_mask = (1 << ctx->bits) - 1;
 	for (j = 0; j < ctx->n; j++) {
 		uint32_t hash = unmasked_hash(ctx->data[j].raw_hash,
 					      params, n);
-#if BITS_PER_PARAM > 1
-		hash &= hash_mask;
-#endif
 		uint32_t f = hash >> (uint64_t)6;
 		uint64_t g = 1UL << (hash & (uint64_t)63);
 		collisions += (hits[f] & g) ? 1 : 0;
 		hits[f] |= g;
 	}
-	memset(hits, 0, (hash_mask + 1) / 8);
+	memset(hits, 0, (1 << ctx->bits) / 8);
 	return collisions;
 }
 
@@ -234,9 +229,6 @@ static uint test_params_l2(struct hashcontext *ctx,
 	for (j = 0; j < ctx->n; j++) {
 		uint32_t hash = unmasked_hash(ctx->data[j].raw_hash,
 					      params, n);
-#if BITS_PER_PARAM > 1
-		hash &= (1 << ctx->bits) - 1;
-#endif
 		uint16_t h = hits[hash];
 		c2 += h;
 		h++;
@@ -341,7 +333,6 @@ static uint test_params_running(struct hashcontext *ctx,
 	int j;
 	uint collisions = 0;
 	uint64_t *hits = (uint64_t *)ctx->hits;
-	uint32_t hash_mask = (1 << ctx->bits) - 1;
 	uint32_t hash;
 	uint64_t param = params[n - 1];
 	uint64_t rot = MR_ROT(param);
@@ -353,9 +344,6 @@ static uint test_params_running(struct hashcontext *ctx,
 					     mul, rot, mask);
 
 		hash = (ctx->data[j].running_hash ^ comp);
-#if BITS_PER_PARAM > 1
-		hash &= hash_mask;
-#endif
 		uint32_t f = hash >> 6;
 		uint64_t g = 1UL << (hash & 63);
 		collisions += (hits[f] & g) ? 1 : 0;
@@ -364,7 +352,7 @@ static uint test_params_running(struct hashcontext *ctx,
 			break;
 		}
 	}
-	memset(hits, 0, (hash_mask + 1) / 8);
+	memset(hits, 0, (1 << ctx->bits) / 8);
 	return collisions;
 }
 
@@ -385,9 +373,6 @@ static uint64_t test_params_with_l2_running(struct hashcontext *ctx,
 		uint32_t comp = MR_COMPONENT(ctx->data[j].raw_hash,
 					     mul, rot, mask);
 		uint32_t hash = ctx->data[j].running_hash ^ comp;
-#if BITS_PER_PARAM > 1
-		hash &= (1 << ctx->bits) - 1;
-#endif
 		uint16_t h = hits[hash];
 		c2 += h;
 		h++;
@@ -458,7 +443,7 @@ static uint find_non_colliding_strings(struct hashcontext *ctx,
 
 static uint64_t calc_best_error(struct hashcontext *ctx, uint n_params)
 {
-	uint n_bits = BASE_N + n_params * BITS_PER_PARAM;
+	uint n_bits = BASE_N + n_params;
 	uint n = 1 << n_bits;
 	uint q = ctx->n / n;
 	uint r = ctx->n % n;
@@ -1324,7 +1309,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 		}
 	}
 
-	retry(ctx, c, n_candidates * 2, N_PARAMS - 2, 50, 8, false);
+	retry(ctx, c, n_candidates * 2, N_PARAMS - 2, 10, 8, false);
 
 	worst = find_non_colliding_strings(ctx, params, N_PARAMS - 2, false);
 	if (worst > 4) {
@@ -1351,10 +1336,8 @@ struct hashcontext *new_context(const char *filename, uint bits,
 	free(strings.strings); /* the (char**), not the (char*) */
 	struct hashcontext *ctx = malloc(sizeof(*ctx));
 
-	N_PARAMS = 1 + (bits - BASE_N + (BITS_PER_PARAM - 1)) / BITS_PER_PARAM;
-	uint size = BASE_N + (N_PARAMS - 1) * BITS_PER_PARAM;
-	printf("size %u bits %u\n", size, bits);
-	uint16_t *hits = calloc((1 << size), sizeof(hits[0]));
+	N_PARAMS = bits + 1 - BASE_N;
+	uint16_t *hits = calloc((1 << bits), sizeof(hits[0]));
 
 	ctx->data = data;
 	ctx->n = strings.n_strings;
