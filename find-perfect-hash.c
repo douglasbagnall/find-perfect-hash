@@ -253,18 +253,21 @@ static uint test_params_l2(struct hashcontext *ctx,
 
 static uint find_worst_param(struct hashcontext *ctx,
 			     struct multi_rot *c,
-			     uint n_params)
+			     uint n_params,
+			     uint *mean_score)
 {
 	uint i, score;
 	uint worst_param = 1;
+	uint sum = 0;
 	uint best_score = UINT_MAX;
-	uint full_score = test_params(ctx, c->params, n_params);
+	uint full_score = test_params_l2(ctx, c->params, n_params);
 	printf("with %u params: %u score\n", n_params,
 	       full_score);
 
 	for (i = 1; i < n_params; i++) {
 		reorder_params(c, i, n_params - 1);
 		score = test_params_l2(ctx, c->params, n_params - 1);
+		sum += score;
 		printf("without %2u: %4u score gain %u\n", i,
 		       score, score - full_score);
 		if (score < best_score) {
@@ -273,6 +276,8 @@ static uint find_worst_param(struct hashcontext *ctx,
 		}
 		reorder_params(c, i, n_params - 1);
 	}
+	*mean_score = (sum + (n_params - 1) / 2) / (n_params - 1);
+	printf("mean score: %4u\n", *mean_score);
 	printf("worst is %2u: %4u score, gain %u\n", worst_param,
 	       best_score,  best_score - full_score);
 	return worst_param;
@@ -282,7 +287,8 @@ static uint find_worst_param(struct hashcontext *ctx,
 static uint describe_hash(struct hashcontext *ctx,
 			  struct multi_rot *c,
 			  struct multi_rot *c2,
-			  uint n_params)
+			  uint n_params,
+			  bool check_collisions)
 {
 	int i, j;
 
@@ -291,7 +297,7 @@ static uint describe_hash(struct hashcontext *ctx,
 
 	uint collisions = test_params(ctx, c->params, n_params);
 
-	if (collisions != c->collisions) {
+	if (collisions != c->collisions && check_collisions) {
 		printf("\033[01;31m collisions mismatch! \033[00m\n"
 		       "presumed %u actual %u\n", c->collisions, collisions);
 	}
@@ -518,7 +524,8 @@ static inline uint64_t test_pair_all_rot(uint64_t param,
 static uint test_all_pairs_all_rot(uint64_t *param,
 				   struct tuple_list pairs,
 				   uint n_params,
-				   uint best_collisions)
+				   uint best_collisions,
+				   uint64_t mask)
 {
 	uint i, j;
 	uint n_bits = n_params + BASE_N - 1;
@@ -550,12 +557,25 @@ static uint test_all_pairs_all_rot(uint64_t *param,
 	uint8_t best_count = pairs.n - MIN(best_collisions, pairs.n);
 	uint8_t best_i = 255;
 
-	for (i = 0; i < 64; i++) {
-		if (ones8[i] > best_count) {
-			best_count = ones8[i];
-			best_i = i;
+	if (mask == 0 || mask == ~0ULL) {
+		for (i = 0; i < 64; i++) {
+			if (ones8[i] > best_count) {
+				best_count = ones8[i];
+				best_i = i;
+			}
+		}
+	} else {
+		for (i = 0; i < 64; i++) {
+			if (mask & 1) {
+				if (ones8[i] > best_count) {
+					best_count = ones8[i];
+					best_i = i;
+				}
+			}
+			mask >>= 1;
 		}
 	}
+
 	if (best_i < 64) {
 		uint64_t rotate = n_bits - best_i - 1;
 		rotate &= 63;
@@ -864,8 +884,24 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 		return UINT_MAX;
 	}
 
-	attempts *= 40;
+	/* triples have 6/8 chance of succeeding. quads have 6/16. */
+	double past_triples_chance = exp(tuples.tuples[4].n * log(6./16.) +
+					 tuples.tuples[3].n * log(6./8.));
+
+
+	attempts *= (uint64_t) sqrt(1.0 / (1e-2 + past_triples_chance));
+	attempts *= 10;
 	printf("making %lu attempts\n", attempts);
+	printf("past_triples_chance is %.3e\n",
+	       past_triples_chance);
+
+	/* if there are a lot going through triples, it is better to do the
+	   64-way scan of pairs */
+
+	bool parallel_pair_search = (past_triples_chance > 3.0 / 64);
+	if (parallel_pair_search) {
+		printf("using parallel penultimate search\n");
+	}
 
 	START_TIMER(penultimate);
 
@@ -928,33 +964,51 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 		   we want to reduce the number of pairs in this round as much
 		   as possible, so check the good rotates found in the
 		   quad/triple check for pair elimination */
-
-		uint64_t nc = non_collisions;
 		uint64_t p = param;
-		uint rotate = n_bits;
-		while (nc) {
-			if (nc & 1) {
-				p = param + rotate * MR_ROT_STEP;
-				collisions = test_all_pairs(p,
-							    tuples.tuples[2],
-							    n + 1);
-				if (collisions < best_collisions) {
-					best_collisions = collisions;
-					best_param = p;
-					printf("new penultimate best %15lx »%-2lu at %lu:"
-					       " collisions %u\n",
-					       MR_MUL(p), MR_ROT(p), j, collisions);
-					if (collisions == 0) {
-						goto win;
-					}
+		uint64_t nc = non_collisions;
+		struct tuple_list pairs = tuples.tuples[2];
+		if (parallel_pair_search) {
+			collisions = test_all_pairs_all_rot(&p, pairs, n + 1,
+							    best_collisions, nc);
+			if (collisions < best_collisions) {
+				best_collisions = collisions;
+				best_param = p;
+				printf("new penultimate best %15lx »%-2lu at %lu:"
+				       " collisions %u\n",
+				       MR_MUL(p), MR_ROT(p), j, collisions);
+				if (collisions == 0) {
+					goto win;
 				}
 			}
-			nc >>= 1;
-			rotate = MIN(rotate - 1, 63);
+		} else {
+			uint rotate = n_bits;
+			while (nc) {
+				if (nc & 1) {
+					p = param + rotate * MR_ROT_STEP;
+					collisions = test_all_pairs(p,
+								    pairs,
+								    n + 1);
+					if (collisions < best_collisions) {
+						best_collisions = collisions;
+						best_param = p;
+						printf("new penultimate best %15lx »%-2lu at %lu:"
+						       " collisions %u\n",
+						       MR_MUL(p), MR_ROT(p), j, collisions);
+						if (collisions == 0) {
+							goto win;
+						}
+					}
+				}
+				nc >>= 1;
+				rotate = MIN(rotate - 1, 63);
+			}
 		}
 	}
   win:
-	printf("past triples %lu times\n", past_triples);
+	printf("past triples %lu times (freq. %.2e; predicted %.2e)\n",
+	       past_triples, past_triples / (attempts * 64.0),
+	       past_triples_chance);
+
 	params[n] = best_param;
 	PRINT_TIMER(penultimate);
 	best_collisions += 2 * tuples.tuples[4].n + tuples.tuples[3].n;
@@ -1060,7 +1114,7 @@ static uint do_last_round(struct hashcontext *ctx,
 		/* we don't need to calculate the full hash */
 		uint64_t p = next_param(ctx->rng, j, params, N_PARAMS);
 		collisions = test_all_pairs_all_rot(&p, pairs, N_PARAMS,
-						    best_collisions);
+						    best_collisions, 0);
 
 		if (collisions < best_collisions) {
 			best_collisions = collisions;
@@ -1162,8 +1216,8 @@ static void retry(struct hashcontext *ctx,
 		printf(COLOUR(C_GREEN,
 			      "-------- round %u ---------------------\n"),
 		       i);
-
-		uint j = find_worst_param(ctx, c, n_params);
+		uint mean_score;
+		uint j = find_worst_param(ctx, c, n_params, &mean_score);
 		worsts[j]++;
 		reorder_params(c, j, n_params - 1);
 		uint64_t victim = params[n_params - 1];
@@ -1183,27 +1237,41 @@ static void retry(struct hashcontext *ctx,
 			continue;
 		}
 		if (stats.max == 2) {
-			c->collisions = do_last_round(ctx, c, attempts);
+			do_last_round(ctx, c, attempts);
 #if 1
 		} else if (stats.max <= 4 && do_penultimate) {
-			c->collisions = do_penultimate_round(ctx, c, attempts * 2,
-							     n_params - 1,
-							     target * 2);
+			do_penultimate_round(ctx, c, attempts * 2,
+					     n_params - 1,
+					     target * 2);
 #endif
 		} else {
-			c->collisions = do_squashing_round(ctx, c, attempts * 2,
-							   n_params - 1,
-							   stats.max,
-							   target * 3);
+			do_squashing_round(ctx, c, attempts * 2,
+					   n_params - 1,
+					   stats.max,
+					   target * 3);
 		}
 
-		uint collisions = describe_hash(ctx, c, &orig, n_params);
+		uint collisions = describe_hash(ctx, c, &orig, n_params, false);
 		uint score = test_params_l2(ctx, c->params, n_params);
 		if (score > target) {
 			printf("collisions %u, score %u target %u\n",
 			       collisions, score, target);
 			params[n_params - 1] = victim;
-			c->collisions = target;
+		} else if (score == target) {
+			uint new_mean_score;
+			printf(COLOUR(C_CYAN,
+				      "equal best score %u; param %lx\n"),
+			       score, params[n_params - 1]);
+			uint k = find_worst_param(ctx, c, n_params, &new_mean_score);
+			if (k != j || new_mean_score < mean_score) {
+				target = score;
+				printf(COLOUR(C_BLUE,
+					      "using new param\n"));
+			} else {
+				params[n_params - 1] = victim;
+				printf(COLOUR(C_BLUE,
+					      "keeping old param\n"));
+			}
 		} else {
 			printf(COLOUR(C_CYAN,
 				      "new best score %u; param %lx\n"),
@@ -1222,7 +1290,7 @@ static void retry(struct hashcontext *ctx,
 
 		PRINT_TIMER(retry);
 	}
-	describe_hash(ctx, c, &orig, n_params);
+	describe_hash(ctx, c, &orig, n_params, false);
 
 	for (i = 0; i < n_params; i++) {
 		printf("param %u was worst %u times\n", i, worsts[i]);
@@ -1242,7 +1310,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 	uint64_t *params = c->params;
 	update_running_hash(ctx, params, 0);
 
-	do_l2_round(ctx, c, n_candidates * 10, 0);
+	do_l2_round(ctx, c, n_candidates * 20, 0);
 
 	for (i = 1; i < N_PARAMS - 2; i++) {
 		attempts = (uint64_t)n_candidates * original_n_strings / ctx->n;
@@ -1256,7 +1324,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 		}
 	}
 
-	retry(ctx, c, n_candidates * 2, N_PARAMS - 2, 10, 6, false);
+	retry(ctx, c, n_candidates * 2, N_PARAMS - 2, 50, 8, false);
 
 	worst = find_non_colliding_strings(ctx, params, N_PARAMS - 2, false);
 	if (worst > 4) {
@@ -1265,10 +1333,10 @@ static void init_multi_rot(struct hashcontext *ctx,
 	}
 
 	/* special cases for the last two rounds */
-	attempts = (uint64_t)n_candidates * original_n_strings / ctx->n;
+	attempts = (uint64_t)n_candidates;
 	do_penultimate_round(ctx, c, attempts * 2, N_PARAMS - 2, UINT_MAX);
 
-	//retry(ctx, c, n_candidates, N_PARAMS - 1, 100, 4, true);
+	//retry(ctx, c, n_candidates, N_PARAMS - 1, 10, 4, true);
 
 	c->collisions = do_last_round(ctx, c, attempts);
 }
@@ -1325,7 +1393,7 @@ static int find_hash(const char *filename, uint bits,
 
 	struct hashcontext *ctx2 = new_context(filename, bits, rng);
 
-	describe_hash(ctx2, &c, NULL, N_PARAMS);
+	describe_hash(ctx2, &c, NULL, N_PARAMS, true);
 	free(c.params);
 	free_context(ctx);
 	free_context(ctx2);
