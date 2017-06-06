@@ -1309,7 +1309,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 		}
 	}
 
-	retry(ctx, c, n_candidates * 2, N_PARAMS - 2, 10, 8, false);
+	//retry(ctx, c, n_candidates, N_PARAMS - 2, 50, 8, false);
 
 	worst = find_non_colliding_strings(ctx, params, N_PARAMS - 2, false);
 	if (worst > 4) {
@@ -1372,7 +1372,9 @@ static int find_hash(const char *filename, uint bits,
 	c.params = calloc(N_PARAMS, sizeof(uint64_t));
 	c.collisions = UINT_MAX;
 	init_multi_rot(ctx, &c, n_candidates);
-	//retry(ctx, &c, n_candidates);
+	if (c->collisions != 0) {
+		retry(ctx, c, n_candidates, N_PARAMS, 20, 4, false);
+	}
 
 	struct hashcontext *ctx2 = new_context(filename, bits, rng);
 
