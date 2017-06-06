@@ -1,6 +1,6 @@
 //gcc -Wall -O3 find-perfect-hash.c -o find-perfect-hash -ggdb -ffast-math -lm -march=native
 
-#define BASE_N 4
+#define BASE_N 3
 #define DETERMINISTIC 01
 #define MAX_SMALL_TUPLE 32
 
