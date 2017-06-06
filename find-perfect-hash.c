@@ -1286,7 +1286,7 @@ static void retry(struct hashcontext *ctx,
 
 static void init_multi_rot(struct hashcontext *ctx,
 			   struct multi_rot *c,
-			   uint n_candidates)
+			   uint64_t n_candidates)
 {
 	uint i;
 	uint worst = ctx->n;
@@ -1295,7 +1295,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 	uint64_t *params = c->params;
 	update_running_hash(ctx, params, 0);
 
-	do_l2_round(ctx, c, n_candidates * 20, 0);
+	do_l2_round(ctx, c, n_candidates * 20UL, 0);
 
 	for (i = 1; i < N_PARAMS - 2; i++) {
 		attempts = (uint64_t)n_candidates * original_n_strings / ctx->n;
