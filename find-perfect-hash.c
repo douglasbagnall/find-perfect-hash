@@ -63,9 +63,6 @@ static void init_hash(struct hashdata *hash, const char *string)
 	hash->string = string;
 	hash->stringlen = s - string;
 	hash->running_hash = 0;
-	//uint32_t *raw32 = (uint32_t *)&hash->raw_hash;
-	//raw32[0] = h2;
-	//raw32[1] = h;
 	hash->raw_hash = h2;
 }
 
@@ -774,7 +771,6 @@ static uint do_squashing_round(struct hashcontext *ctx,
 		uint scores[64];
 		bool short_cut_exit = false;
 		memset(scores, 0, sizeof(scores));
-		//printf("attempt %lu max %u\n", j, max);
 		for (k = max; k >= min; k--) {
 			short_cut_exit = false;
 			uint ones_target = (k + 1) / 2;
@@ -816,9 +812,6 @@ static uint do_squashing_round(struct hashcontext *ctx,
 
 		uint64_t rotate = n_bits;
 		for (h = 0; h < 64; h++) {
-			//printf("h %u score %u best %u\n",
-			//h, scores[h], best_score);
-
 			if (scores[h] < best_score) {
 				best_score = scores[h];
 				best_param = param + rotate * MR_ROT_STEP;
@@ -890,8 +883,6 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 
 	START_TIMER(penultimate);
 
-	//printf("non-collisions mask %lx\n", ~((1UL << n_bits) - 1));
-
 	for (j = 0; j < attempts; j++) {
 		/* we don't need to calculate the full hash */
 		uint64_t param = next_param(ctx->rng, j, params, n + 1);
@@ -941,7 +932,6 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 			continue;
 		}
 		past_triples++;
-		//printf("got past triples at %lu. non-collisions %016lx\n", j, non_collisions);
 		/* at this point we have met the mandatory criteria, and
 		   increased the number of pairs for the next round by
 		   2 * n_quads + 1 * n_triples.
@@ -1309,8 +1299,6 @@ static void init_multi_rot(struct hashcontext *ctx,
 		}
 	}
 
-	//retry(ctx, c, n_candidates, N_PARAMS - 2, 50, 8, false);
-
 	worst = find_non_colliding_strings(ctx, params, N_PARAMS - 2, false);
 	if (worst > 4) {
 		printf("the situation is hopeless. stopping\n");
@@ -1320,8 +1308,6 @@ static void init_multi_rot(struct hashcontext *ctx,
 	/* special cases for the last two rounds */
 	attempts = (uint64_t)n_candidates;
 	do_penultimate_round(ctx, c, attempts * 2, N_PARAMS - 2, UINT_MAX);
-
-	//retry(ctx, c, n_candidates, N_PARAMS - 1, 10, 4, true);
 
 	c->collisions = do_last_round(ctx, c, attempts);
 }
