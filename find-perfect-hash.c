@@ -872,8 +872,7 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 					 tuples.tuples[3].n * log(6./8.));
 
 
-	attempts *= (uint64_t) sqrt(1.0 / (1e-2 + past_triples_chance));
-	attempts *= 10;
+	attempts *= (uint64_t) sqrt(100.0 / (3e-3 + past_triples_chance));
 	printf("making %lu attempts\n", attempts);
 	printf("past_triples_chance is %.3e\n",
 	       past_triples_chance);
