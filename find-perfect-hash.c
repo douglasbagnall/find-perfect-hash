@@ -455,11 +455,16 @@ static uint64_t calc_best_error(struct hashcontext *ctx, uint n_params)
 static inline uint64_t next_param(struct rng *rng, uint64_t round,
 				  uint64_t *params, uint n_params)
 {
-	return rand64(rng);
+	/*XXX low rotates are a bit useless */
+	uint64_t n_bits = n_params + BASE_N - 1;
+	uint64_t p, rot;
+	do {
+		p = rand64(rng);
+		rot = MR_ROT(p) + n_bits;
+		n_bits--;
+	} while (n_bits < 64 && rot < 10);
+	return p;
 }
-
-
-
 
 static inline bool test_pair(uint64_t param,
 			     uint64_t raw_a,
