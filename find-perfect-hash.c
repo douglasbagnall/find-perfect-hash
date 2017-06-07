@@ -1361,8 +1361,12 @@ static int find_hash(const char *filename, uint bits,
 	c.params = calloc(N_PARAMS, sizeof(uint64_t));
 	c.collisions = UINT_MAX;
 	init_multi_rot(ctx, &c, n_candidates);
-	if (c->collisions != 0) {
-		retry(ctx, c, n_candidates, N_PARAMS, 20, 4, false);
+
+	if (c.collisions != 0 && false) {
+		printf("Final hash from initial search\n");
+		describe_hash(ctx, &c, NULL, N_PARAMS, true);
+		printf("Retrying\n");
+		retry(ctx, &c, n_candidates, N_PARAMS, 20, 4, true);
 	}
 
 	struct hashcontext *ctx2 = new_context(filename, bits, rng);
