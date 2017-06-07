@@ -913,11 +913,9 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 
 			/* We need each one to not collide with 2 others.
 			 */
-
-			abcd = ((ab | ac) &
-				(bc | bd) &
-				(bc | cd) &
-				(ad | cd));
+			abcd = ((ab & cd) |
+				(ac & bd) |
+				(ad & bc));
 			non_collisions &= abcd;
 		}
 		if (non_collisions == 0) {
