@@ -2,7 +2,7 @@
 
 #define BASE_N 3
 #define DETERMINISTIC 01
-#define MAX_SMALL_TUPLE 32
+#define MAX_SMALL_TUPLE 200
 
 #include "find-perfect-hash-helpers.h"
 
