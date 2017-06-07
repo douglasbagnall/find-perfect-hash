@@ -824,6 +824,7 @@ static uint do_squashing_round(struct hashcontext *ctx,
 				       " score %u\n",
 				       MR_MUL(param), rotate, j, scores[h]);
 				if (best_score == 0) {
+					printf("squashing has succeeded!\n");
 					goto win;
 				}
 			}
