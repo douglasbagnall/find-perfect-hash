@@ -1362,7 +1362,7 @@ static int find_hash(const char *filename, uint bits,
 	c.collisions = UINT_MAX;
 	init_multi_rot(ctx, &c, n_candidates);
 
-	if (c.collisions != 0 && false) {
+	if (c.collisions != 0) {
 		printf("Final hash from initial search\n");
 		describe_hash(ctx, &c, NULL, N_PARAMS, true);
 		printf("Retrying\n");
