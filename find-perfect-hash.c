@@ -757,7 +757,7 @@ static uint do_squashing_round(struct hashcontext *ctx,
 	uint32_t mask = MR_MASK(n);
 
 	attempts /= 20;
-	attempts *= MAX(MIN(mean, 20), 4);
+	attempts *= MAX(MIN(mean, 25), 5);
 
 	printf("making %lu attempts. mask %u max %u min %u mean %u\n",
 	       attempts, mask, max, min, mean);
@@ -873,7 +873,7 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 					 tuples.tuples[3].n * log(6./8.));
 
 
-	attempts *= (uint64_t) sqrt(100.0 / (3e-3 + past_triples_chance));
+	attempts *= (uint64_t) sqrt(10.0 / (3e-4 + past_triples_chance));
 	printf("making %lu attempts\n", attempts);
 	printf("past_triples_chance is %.3e\n",
 	       past_triples_chance);
