@@ -873,7 +873,7 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 					 tuples.tuples[3].n * log(6./8.));
 
 
-	attempts *= (uint64_t) sqrt(10.0 / (3e-4 + past_triples_chance));
+	attempts *= (uint64_t) sqrt(1.0 / (3e-4 + past_triples_chance));
 	printf("making %lu attempts\n", attempts);
 	printf("past_triples_chance is %.3e\n",
 	       past_triples_chance);
@@ -1362,7 +1362,7 @@ static int find_hash(const char *filename, uint bits,
 	c.collisions = UINT_MAX;
 	init_multi_rot(ctx, &c, n_candidates);
 
-	if (c.collisions != 0) {
+	if (c.collisions != 0 && false) {
 		printf("Final hash from initial search\n");
 		describe_hash(ctx, &c, NULL, N_PARAMS, true);
 		printf("Retrying\n");
