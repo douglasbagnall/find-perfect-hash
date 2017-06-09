@@ -25,6 +25,8 @@
 #define C_GREY  "\033[00;37m"
 #define C_WHITE  "\033[01;37m"
 
+#define unlikely(x) __builtin_expect(!!(x), 0)
+
 #define COLOUR(c, s) c s C_NORMAL
 
 #ifndef MAX
@@ -36,14 +38,15 @@
 
 #define offsetof(type, member)  __builtin_offsetof (type, member)
 
+#define ROTATE(x, k) (((x) << (k)) | ((x) >> (sizeof(x) * 8 - (k))))
+
+#if 0
 struct rng {
 	uint64_t a;
 	uint64_t b;
 	uint64_t c;
 	uint64_t d;
 };
-
-#define ROTATE(x, k) (((x) << (k)) | ((x) >> (sizeof(x) * 8 - (k))))
 
 static uint64_t rand64(struct rng *x)
 {
@@ -64,6 +67,11 @@ static void rng_init(struct rng *x, uint64_t seed)
 		(void)rand64(x);
 	}
 }
+
+#else
+#include "chacha8.h"
+
+#endif
 
 static inline void rng_random_init(struct rng *rng)
 {
