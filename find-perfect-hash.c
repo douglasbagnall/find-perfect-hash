@@ -767,6 +767,7 @@ static uint do_squashing_round(struct hashcontext *ctx,
 	min = size_bounds.min;
 	max = size_bounds.max;
 	mean = size_bounds.mean;
+	count = size_bounds.count;
 	uint32_t mask = MR_MASK(n);
 
 	attempts /= 20;
@@ -803,7 +804,7 @@ static uint do_squashing_round(struct hashcontext *ctx,
 				}
 				for (h = 0; h < 64; h++) {
 					uint x = ones[h];
-					scores[h] +=  x * x * x;
+					scores[h] += 1 << MIN(x, 24);
 				}
  			}
 			if (k < max && k > min) {
@@ -831,12 +832,12 @@ static uint do_squashing_round(struct hashcontext *ctx,
 		uint64_t rotate = n_bits;
 		for (h = 0; h < 64; h++) {
 			if (scores[h] < best_score) {
+				printf("new squashing best %16lx & 1«%-2lu at %lu:"
+				       " score %u < %u (target %u)\n",
+				       MR_MUL(param), rotate, j, scores[h], best_score, count);
 				best_score = scores[h];
 				best_param = param + rotate * MR_ROT_STEP;
-				printf("new squashing best %16lx & 1«%-2lu at %lu:"
-				       " score %u\n",
-				       MR_MUL(param), rotate, j, scores[h]);
-				if (best_score == 0) {
+				if (best_score == count) {
 					printf("squashing has succeeded!\n");
 					goto win;
 				}
