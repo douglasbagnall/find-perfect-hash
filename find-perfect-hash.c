@@ -1240,7 +1240,7 @@ static void retry(struct hashcontext *ctx,
 			do_squashing_round(ctx, c, attempts * 2,
 					   n_params - 1,
 					   stats.max,
-					   target * 3);
+					   UINT_MAX);
 		}
 
 		uint collisions = describe_hash(ctx, c, &orig, n_params, false);
