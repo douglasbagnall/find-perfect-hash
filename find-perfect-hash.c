@@ -821,7 +821,7 @@ static uint do_squashing_round(struct hashcontext *ctx,
 				}
 				for (h = 0; h < 64; h++) {
 					uint x = ones[h];
-					scores[h] += (1 << MIN(x, 24)) - 1;
+					scores[h] += (1 << MIN(x, 24)) + x * x - 1;
 				}
  			}
 			if (k < max && k > min) {
