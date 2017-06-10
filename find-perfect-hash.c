@@ -588,6 +588,7 @@ struct size_extrema {
 	uint min;
 	uint max;
 	uint mean;
+	uint count;
 };
 
 static struct size_extrema find_unresolved_small_tuples(struct hashcontext *ctx,
@@ -673,7 +674,7 @@ static struct size_extrema find_unresolved_small_tuples(struct hashcontext *ctx,
 		       max_occuring);
 	}
 	size_bounds.mean = (sum + (n_tuples / 2)) / n_tuples;
-
+	size_bounds.count = n_tuples;
 	dest->tuples[0] = (struct tuple_list){NULL, 0};
 	dest->tuples[1] = (struct tuple_list){NULL, 0};
 
@@ -758,7 +759,7 @@ static uint do_squashing_round(struct hashcontext *ctx,
 	struct hash_tuples tuples;
 	uint n_bits = n + BASE_N - 1;
 
-	uint min, mean;
+	uint min, mean, count;
 	max = MIN(max, MAX_SMALL_TUPLE);
 	struct size_extrema size_bounds = find_unresolved_small_tuples(ctx, params,
 								       n, &tuples,
