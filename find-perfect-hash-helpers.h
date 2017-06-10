@@ -40,6 +40,7 @@
 
 #define ROTATE(x, k) (((x) << (k)) | ((x) >> (sizeof(x) * 8 - (k))))
 
+#define ARRAY_SIZE(a) (sizeof(a)/sizeof(a[0]))
 
 #if 0
 #include "sfc.h"

@@ -120,11 +120,13 @@ static bool check_raw_hash(struct hashcontext *ctx)
 #define MR_MUL(x) (((x) >> 5) | 1)
 #define MR_ROT_STEP 1
 #define MR_ROT_MASK 63UL
+#define MUL_ROT_TO_PARAM(m, r)((((m) & ~1ULL) << 5) | (r))
 #else
 #define MR_ROT(x) ((x) >> 58UL)
 #define MR_MUL(x) (((x) << 1) | 1)
 #define MR_ROT_STEP (1ULL << 58)
 #define MR_ROT_MASK (63UL << 58)
+#define MUL_ROT_TO_PARAM(m, r)(((m) >> 1) | ((r) << 58))
 #endif
 
 #define MR_MASK(i) (((i) == 0) ?					\
@@ -455,9 +457,19 @@ static uint64_t calc_best_error(struct hashcontext *ctx, uint n_params)
 static inline uint64_t next_param(struct rng *rng, uint64_t round,
 				  uint64_t *params, uint n_params)
 {
-	/*XXX low rotates are a bit useless */
+	/* these ones work perfect for the first 2 params in
+	   ldap_display_names */
+	uint64_t known_good[] = {
+		MUL_ROT_TO_PARAM(0x0f9e774af7f03fb, 29),
+		MUL_ROT_TO_PARAM(0x055ee0661539035, 4)
+	};
+	if (round < ARRAY_SIZE(known_good)) {
+		return known_good[round];
+	}
 	uint64_t n_bits = n_params + BASE_N - 1;
 	uint64_t p, rot;
+	/* low rotates are a bit useless, so we try to select them less
+	   often */
 	do {
 		p = rand64(rng);
 		rot = MR_ROT(p) + n_bits;
