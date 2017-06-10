@@ -40,7 +40,11 @@
 
 #define ROTATE(x, k) (((x) << (k)) | ((x) >> (sizeof(x) * 8 - (k))))
 
+
 #if 0
+#include "sfc.h"
+
+#elif 1
 struct rng {
 	uint64_t a;
 	uint64_t b;
