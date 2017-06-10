@@ -210,7 +210,7 @@ struct strings {
 	char **strings;
 };
 
-static struct strings load_strings(const char *filename)
+static inline struct strings load_strings(const char *filename)
 {
 	int i, j;
 	int len;
