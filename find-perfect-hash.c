@@ -790,7 +790,7 @@ static uint do_squashing_round(struct hashcontext *ctx,
 	attempts /= 20;
 	attempts *= MAX(MIN(mean, 25), 5);
 
-	printf("making %lu attempts. mask %u max %u min %u mean %u\n",
+	printf("making %'lu attempts. mask %u max %u min %u mean %u\n",
 	       attempts, mask, max, min, mean);
 
 	START_TIMER(squashing);
@@ -905,7 +905,7 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 
 
 	attempts *= (uint64_t) sqrt(1.0 / (3e-4 + past_triples_chance));
-	printf("making %lu attempts\n", attempts);
+	printf("making %'lu attempts\n", attempts);
 	printf("past_triples_chance is %.3e\n",
 	       past_triples_chance);
 
@@ -1163,7 +1163,7 @@ static void do_l2_round(struct hashcontext *ctx,
 	best_error = calc_best_error(ctx, n);
 	best_param = 0;
 	best_collisions2 = UINT64_MAX;
-	printf("making %lu attempts\n", attempts);
+	printf("making %'lu attempts\n", attempts);
 
 	for (j = 0; j < attempts; j++) {
 		params[n] = next_param(ctx->rng, j, params, n);
