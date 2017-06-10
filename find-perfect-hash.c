@@ -777,7 +777,7 @@ static uint do_squashing_round(struct hashcontext *ctx,
 	struct hash_tuples tuples;
 	uint n_bits = n + BASE_N - 1;
 
-	uint min, mean, count;
+	uint min, mean;
 	max = MIN(max, MAX_SMALL_TUPLE);
 	struct size_extrema size_bounds = find_unresolved_small_tuples(ctx, params,
 								       n, &tuples,
@@ -785,7 +785,6 @@ static uint do_squashing_round(struct hashcontext *ctx,
 	min = size_bounds.min;
 	max = size_bounds.max;
 	mean = size_bounds.mean;
-	count = size_bounds.count;
 	uint32_t mask = MR_MASK(n);
 
 	attempts /= 20;
@@ -822,7 +821,7 @@ static uint do_squashing_round(struct hashcontext *ctx,
 				}
 				for (h = 0; h < 64; h++) {
 					uint x = ones[h];
-					scores[h] += 1 << MIN(x, 24);
+					scores[h] += (1 << MIN(x, 24)) - 1;
 				}
  			}
 			if (k < max && k > min) {
@@ -851,11 +850,11 @@ static uint do_squashing_round(struct hashcontext *ctx,
 		for (h = 0; h < 64; h++) {
 			if (scores[h] < best_score) {
 				printf("new squashing best %16lx & 1«%-2lu at %lu:"
-				       " score %u < %u (target %u)\n",
-				       MR_MUL(param), rotate, j, scores[h], best_score, count);
+				       " score %u < %u\n",
+				       MR_MUL(param), rotate, j, scores[h], best_score);
 				best_score = scores[h];
 				best_param = param + rotate * MR_ROT_STEP;
-				if (best_score == count) {
+				if (best_score == 0) {
 					printf("squashing has succeeded!\n");
 					goto win;
 				}
