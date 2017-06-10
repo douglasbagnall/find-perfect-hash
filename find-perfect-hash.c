@@ -459,9 +459,27 @@ static inline uint64_t next_param(struct rng *rng, uint64_t round,
 {
 	/* these ones work perfect for the first 2 params in
 	   ldap_display_names */
-	uint64_t known_good[] = {
+	static const uint64_t known_good[] = {
+		MUL_ROT_TO_PARAM(0x055ee0661539035, 4),
+		MUL_ROT_TO_PARAM(0x0b3bfa87a455f57, 20),
 		MUL_ROT_TO_PARAM(0x0f9e774af7f03fb, 29),
-		MUL_ROT_TO_PARAM(0x055ee0661539035, 4)
+		MUL_ROT_TO_PARAM(0x127925c6740e3ed, 17),
+		MUL_ROT_TO_PARAM(0x17b18b24c617c13, 33),
+		MUL_ROT_TO_PARAM(0x1979f230b563735, 29),
+		MUL_ROT_TO_PARAM(0x1bea95023ed9d1b, 17),
+		MUL_ROT_TO_PARAM(0x1c87c0f29ddf723, 41),
+		MUL_ROT_TO_PARAM(0x3327c9d47ab5d01, 29),
+		MUL_ROT_TO_PARAM(0x3aaffe46faa5409, 43),
+		MUL_ROT_TO_PARAM(0x3f6bf5d9e80a759, 23),
+		MUL_ROT_TO_PARAM(0x3f6bf5d9e80a759, 23),
+		MUL_ROT_TO_PARAM(0x4494ea134a45de3, 42),
+		MUL_ROT_TO_PARAM(0x45d2ea0a4745b61, 7),
+		MUL_ROT_TO_PARAM(0x4bf9dc8c4fa9e77, 34),
+		MUL_ROT_TO_PARAM(0x55b4dfda7eee419, 41),
+		MUL_ROT_TO_PARAM(0x5c441685af001d7, 29),
+		MUL_ROT_TO_PARAM(0x648778c8fa85f4f, 34),
+		MUL_ROT_TO_PARAM(0x6b320a73805869d, 38),
+		MUL_ROT_TO_PARAM(0x7db6e30b60fe3cf, 24),
 	};
 	if (round < ARRAY_SIZE(known_good)) {
 		return known_good[round];
