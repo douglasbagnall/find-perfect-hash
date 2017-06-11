@@ -5,6 +5,7 @@
 #define MAX_SMALL_TUPLE 200
 
 #include "find-perfect-hash-helpers.h"
+#include <locale.h>
 
 struct hashdata {
 	const char *string;
@@ -849,9 +850,9 @@ static uint do_squashing_round(struct hashcontext *ctx,
 		uint64_t rotate = n_bits;
 		for (h = 0; h < 64; h++) {
 			if (scores[h] < best_score) {
-				printf("new squashing best %16lx & 1«%-2lu at %lu:"
-				       " score %u < %u\n",
-				       MR_MUL(param), rotate, j, scores[h], best_score);
+				printf("new squashing best %16lx & 1«%-2lu at %'lu:"
+				       " score %u\n",
+				       MR_MUL(param), rotate, j, scores[h]);
 				best_score = scores[h];
 				best_param = param + rotate * MR_ROT_STEP;
 				if (best_score == 0) {
@@ -863,8 +864,8 @@ static uint do_squashing_round(struct hashcontext *ctx,
 		}
 	}
   win:
-	printf("past half_way %lu times\n", past_half_way);
-	printf("short_cuts: %lu\n", short_cuts);
+	printf("past half_way %'lu times\n", past_half_way);
+	printf("short_cuts: %'lu\n", short_cuts);
 	params[n] = best_param;
 	PRINT_TIMER(squashing);
 	uint best_collisions = test_params_running(ctx, params, n + 1,
@@ -982,7 +983,7 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 			if (collisions < best_collisions) {
 				best_collisions = collisions;
 				best_param = p;
-				printf("new penultimate best %15lx »%-2lu at %lu:"
+				printf("new penultimate best %15lx »%-2lu at %'lu:"
 				       " collisions %u\n",
 				       MR_MUL(p), MR_ROT(p), j, collisions);
 				if (collisions == 0) {
@@ -1000,7 +1001,7 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 					if (collisions < best_collisions) {
 						best_collisions = collisions;
 						best_param = p;
-						printf("new penultimate best %15lx »%-2lu at %lu:"
+						printf("new penultimate best %15lx »%-2lu at %'lu:"
 						       " collisions %u\n",
 						       MR_MUL(p), MR_ROT(p), j, collisions);
 						if (collisions == 0) {
@@ -1014,7 +1015,7 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 		}
 	}
   win:
-	printf("past triples %lu times (freq. %.2e; predicted %.2e)\n",
+	printf("past triples %'lu times (freq. %.2e; predicted %.2e)\n",
 	       past_triples, past_triples / (attempts * 64.0),
 	       past_triples_chance);
 
@@ -1056,7 +1057,7 @@ static uint do_last_round(struct hashcontext *ctx,
 	    (1UL << pairs.n) < attempts * 6400UL) {
 		uint64_t exact_attempts = attempts * 500;
 		uint best_run = 0;
-		printf("trying for exact solution with %lu attempts (64 way parallel)\n",
+		printf("trying for exact solution with %'lu attempts (64 way parallel)\n",
 		       exact_attempts);
 
 		/* Test all rotations at once:
@@ -1084,7 +1085,7 @@ static uint do_last_round(struct hashcontext *ctx,
 					best_param = p;
 					best_run = i;
 					printf("new best run %15lx  "
-					       "at %lu: %u pairs\n",
+					       "at %'lu: %u pairs\n",
 					       MR_MUL(p), j, i);
 				}
 				break;
@@ -1099,14 +1100,14 @@ static uint do_last_round(struct hashcontext *ctx,
 
 					if (collisions == 0) {
 						best_param = p;
-						printf("WINNING run %15lx »%-2lu at %lu\n",
+						printf("WINNING run %15lx »%-2lu at %'lu\n",
 						       MR_MUL(p), MR_ROT(p), j);
 						goto win;
 					}
 					p += MR_ROT_STEP;
 				}
 				printf("we thought we has a winning param, but no!"
-				       "%15lx »?? at %lu\n",
+				       "%15lx »?? at %'lu\n",
 				       MR_MUL(p), j);
 			}
 		}
@@ -1116,7 +1117,7 @@ static uint do_last_round(struct hashcontext *ctx,
 		return UINT_MAX;
 	}
 
-	printf("trying for an inexact solution with %lu attempts\n",
+	printf("trying for an inexact solution with %'lu attempts\n",
 	       attempts);
 
 	for (j = 0; j < attempts; j++) {
@@ -1128,10 +1129,10 @@ static uint do_last_round(struct hashcontext *ctx,
 		if (collisions < best_collisions) {
 			best_collisions = collisions;
 			best_param = p;
-			printf("new final round best %15lx »%-2lu at %lu: collisions %u\n",
+			printf("new final round best %15lx »%-2lu at %'lu: collisions %u\n",
 			       MR_MUL(p), MR_ROT(p), j, collisions);
 			if (collisions == 0) {
-				printf("found a winner after %lu\n", j);
+				printf("found a winner after %'lu\n", j);
 				break;
 			}
 		}
@@ -1174,13 +1175,13 @@ static void do_l2_round(struct hashcontext *ctx,
 		if (collisions2 < best_collisions2) {
 			best_collisions2 = collisions2;
 			best_param = params[n];
-			printf("new best %15lx »%-2lu at %lu: "
+			printf("new best %15lx »%-2lu at %'lu: "
 			       "err %lu > %lu; diff %lu\n",
 			       MR_MUL(best_param), MR_ROT(best_param),
 			       j, collisions2, best_error,
 			       collisions2 - best_error);
 			if (collisions2 == best_error) {
-				printf("found good candidate after %lu\n", j);
+				printf("found good candidate after %'lu\n", j);
 				collisions = test_params_running(ctx,
 								 params,
 								 n + 1,
@@ -1412,6 +1413,7 @@ static int find_hash(const char *filename, uint bits,
 
 int main(int argc, char *argv[])
 {
+	setlocale(LC_NUMERIC, "");
 	if (argc < 3) {
 		printf("usage: %s <string list> <hash bits>\n\n",
 		       argv[0]);
@@ -1428,7 +1430,7 @@ int main(int argc, char *argv[])
 	}
 
 	uint n_candidates = strtoul(argv[3], NULL, 10);
-	printf("Using %u candidates per round \n", n_candidates);
+	printf("Using %'u candidates per round \n", n_candidates);
 
 	struct rng rng;
 #if DETERMINISTIC
