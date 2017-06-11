@@ -1,0 +1,75 @@
+#!/usr/bin/python
+
+# What is the chance that a random bisection of a set will split it as
+# evenly as possible, that is, if the number of elements n is even, it
+# splits into two sets of (n/2); if odd into (n/2) and (n/2 + 1).
+#
+# This is the binomial over 2 to the power of n, but it can happen 2
+# ways with the odd ones, so we double it in that case.
+"""[USAGE] bisection-probabilities [n| m*n [n| m*n [...]]]
+
+Calculate the chance that a random bisection will be optimal,
+splitting a set or several sets into as close to 2 equal halves as
+possible.
+
+An integer argument indicates a set of that size.
+
+An argument in the form "m*n", where m and n are itegers and "*" is a
+literal "*" (examples: "3*12", "1*1") indicates m sets of size n.
+
+The overal chance of all of these biections happening at once is
+calculated, and this is also show as a number of bits (indicating the
+scale of search).
+
+EXAMPLES
+
+./bisection-probabilities 3
+
+./bisection-probabilities 4*96 12*97
+"""
+
+from math import factorial, log
+import sys
+
+def binomial(n, k):
+    k2 = n - k
+    return factorial(n) // (factorial(k) * factorial(k2))
+
+def prob(n):
+    b = binomial(n, n // 2)
+    p2 = 2 ** n
+    if n & 1:
+        b *= 2
+    return b, p2, float(b) / p2
+
+def calc(args):
+    p_overall = 1.0
+    for a in args:
+        if '*' in a:
+            m, n = [int(x) for x in a.split('*', 1)]
+            s = "%2d nodes" % m
+        else:
+            m, n = 1, int(a)
+            s = "  1 node"
+
+        num, denom, p = prob(n)
+        p_overall *= p ** m
+
+        print ("%s of %d. p %.3g (%d/%d)" %
+               (s, n, p, num, denom))
+
+    print "overall probability: %g" % p_overall
+    print "bits: %.2f" % -log(p_overall, 2)
+
+def main():
+    if sys.argv[1:]:
+        try:
+            calc(sys.argv[1:])
+            sys.exit()
+        except ValueError:
+            pass
+
+    print __doc__
+
+
+main()
