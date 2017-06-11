@@ -1,7 +1,7 @@
 //gcc -Wall -O3 find-perfect-hash.c -o find-perfect-hash -ggdb -ffast-math -lm -march=native
 
 #define BASE_N 3
-#define DETERMINISTIC 01
+#define DETERMINISTIC 0
 #define MAX_SMALL_TUPLE 200
 
 #include "find-perfect-hash-helpers.h"
