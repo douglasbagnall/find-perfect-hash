@@ -552,52 +552,6 @@ static uint64_t calc_best_error(struct hashcontext *ctx, uint n_params)
 	return sum + min_h * min_h * min_h;
 }
 
-static void populate_db(struct hashcontext *ctx)
-{
-	static const uint64_t known_good[] = {
-		MUL_ROT_TO_PARAM(0x04188269d579b41, 41),
-		MUL_ROT_TO_PARAM(0x055ee0661539035,  4),
-		MUL_ROT_TO_PARAM(0x072f936ef397397, 37),
-		MUL_ROT_TO_PARAM(0x0a100976e5aece9, 17),
-		MUL_ROT_TO_PARAM(0x0b3bfa87a455f57, 20),
-		MUL_ROT_TO_PARAM(0x0f0b48e7f36611d, 26),
-		MUL_ROT_TO_PARAM(0x0f9e774af7f03fb, 29),
-		MUL_ROT_TO_PARAM(0x106a3a1bc2e6c53, 30),
-		MUL_ROT_TO_PARAM(0x127925c6740e3ed, 17),
-		MUL_ROT_TO_PARAM(0x17b18b24c617c13, 33),
-		MUL_ROT_TO_PARAM(0x1979f230b563735, 29),
-		MUL_ROT_TO_PARAM(0x1bea95023ed9d1b, 17),
-		MUL_ROT_TO_PARAM(0x1c87c0f29ddf723, 41),
-		MUL_ROT_TO_PARAM(0x248f078bc51eb71, 30),
-		MUL_ROT_TO_PARAM(0x24cdd66771fd87b, 40),
-		MUL_ROT_TO_PARAM(0x25742a1f6dc1d33,  7),
-		MUL_ROT_TO_PARAM(0x2ba2b86b604b4e7, 11),
-		MUL_ROT_TO_PARAM(0x3327c9d47ab5d01, 29),
-		MUL_ROT_TO_PARAM(0x3461b73264c64b3, 44),
-		MUL_ROT_TO_PARAM(0x39e5993cb06bb5d, 24),
-		MUL_ROT_TO_PARAM(0x3aaffe46faa5409, 43),
-		MUL_ROT_TO_PARAM(0x3d4b959ad6b0f11, 27),
-		MUL_ROT_TO_PARAM(0x3f6bf5d9e80a759, 23),
-		MUL_ROT_TO_PARAM(0x408402f9523bba7, 32),
-		MUL_ROT_TO_PARAM(0x4494ea134a45de3, 42),
-		MUL_ROT_TO_PARAM(0x45d2ea0a4745b61,  7),
-		MUL_ROT_TO_PARAM(0x4bf9dc8c4fa9e77, 34),
-		MUL_ROT_TO_PARAM(0x55b4dfda7eee419, 41),
-		MUL_ROT_TO_PARAM(0x5c441685af001d7, 29),
-		MUL_ROT_TO_PARAM(0x627b75f357d0967, 25),
-		MUL_ROT_TO_PARAM(0x648778c8fa85f4f, 34),
-		MUL_ROT_TO_PARAM(0x683a5efebe66237, 28),
-		MUL_ROT_TO_PARAM(0x6b320a73805869d, 38),
-		MUL_ROT_TO_PARAM(0x70361498bc1164b, 35),
-		MUL_ROT_TO_PARAM(0x72adddaa227f727, 13),
-		MUL_ROT_TO_PARAM(0x7db6e30b60fe3cf, 24),
-	};
-
-	for (int i = 0; i < ARRAY_SIZE(known_good); i++) {
-		add_db_param(ctx, known_good[i]);
-	}
-}
-
 
 static inline uint64_t next_param(struct hashcontext *ctx,
 				  uint64_t round,
@@ -1520,7 +1474,6 @@ static struct hashcontext *new_context(const char *filename, uint bits,
 	ctx->string_mem = strings.mem;
 	ctx->db_name = db_name;
 	read_db(ctx, db_name);
-	populate_db(ctx);
 
 	return ctx;
 }
