@@ -6,6 +6,7 @@
 
 #include "find-perfect-hash-helpers.h"
 #include <locale.h>
+#include "argparse/argparse.h"
 
 struct hashdata {
 	const char *string;
@@ -21,6 +22,9 @@ struct hashcontext {
 	uint bits;
 	struct rng *rng;
 	char *string_mem;
+	const char *db_name;
+	uint64_t *good_params;
+	uint n_good_params;
 };
 
 struct multi_rot {
@@ -115,6 +119,99 @@ static bool check_raw_hash(struct hashcontext *ctx)
 	free(values);
 	return false;
 }
+
+
+static void save_db(struct hashcontext *ctx)
+{
+	if (ctx->db_name != NULL &&
+	    ctx->n_good_params != 0 &&
+	    ctx->good_params != NULL) {
+		char *backup;
+		int ret = asprintf(&backup, "%s.bak", ctx->db_name);
+		if (ret < 5) {
+			printf(COLOUR(C_RED, "could not save backup "
+				      "param DB %s.bak\n"),
+			       ctx->db_name);
+			if (ret >= 0) {
+				free(backup);
+			}
+			return;
+		}
+		rename(ctx->db_name, backup);
+		free(backup);
+		FILE *f = fopen(ctx->db_name, "w");
+		fwrite(ctx->good_params, sizeof(uint64_t),
+		       ctx->n_good_params, f);
+		//printf("Saved %u good params in %s\n",
+		//       ctx->n_good_params, ctx->db_name);
+	}
+}
+
+static void add_db_param(struct hashcontext *ctx, uint64_t param)
+{
+	if (ctx->good_params == NULL) {
+		return;
+	}
+	///XXX perhaps sort or something
+	for (uint i = 0; i < ctx->n_good_params; i++) {
+		if (ctx->good_params[i] == param) {
+			printf("param #%d %lx already saved\n", i, param);
+			return;
+		}
+	}
+	if ((ctx->n_good_params & 15) == 0) {
+		printf("reallocing param DB of size %u\n", ctx->n_good_params);
+		ctx->good_params = realloc(ctx->good_params,
+					   (ctx->n_good_params + 16) * sizeof(uint64_t));
+		if (ctx->good_params == NULL) {
+			printf(COLOUR(C_RED, "failed to realloc param DB\n"));
+			return;
+		}
+	}
+	ctx->good_params[ctx->n_good_params] = param;
+	ctx->n_good_params++;
+	printf("saved param #%u %lx\n", ctx->n_good_params, param);
+	save_db(ctx);
+}
+
+
+static void read_db(struct hashcontext *ctx, const char *db_name)
+{
+	ctx->n_good_params = 0;
+	ctx->good_params = NULL;
+	if (db_name != NULL) {
+		int len;
+		size_t len2;
+		FILE *f = fopen(db_name, "r");
+		if (f == NULL) {
+			printf(COLOUR(C_CYAN, "could not open param DB %s\n"),
+			       db_name);
+			ctx->n_good_params = 0;
+			ctx->good_params = malloc(16 * sizeof(uint64_t));
+			return;
+		}
+		fseek(f, 0, SEEK_END);
+		len = ftell(f);
+		rewind(f);
+		ctx->good_params = malloc(len + 16 * sizeof(uint64_t));
+		if (ctx->good_params == NULL) {
+			printf(COLOUR(C_RED, "could not alloc %d bytes\n"),
+			       len);
+			fclose(f);
+			return;
+		}
+		len2 = fread(ctx->good_params, 1, len, f);
+		fclose(f);
+		if (len != (int)len2) {
+			printf(COLOUR(C_RED, "error reading %d bytes"
+				      "(got %zu)\n"),
+			       len, len2);
+			return;
+		}
+		ctx->n_good_params = len2 / sizeof(uint64_t);
+	}
+}
+
 
 #if 1
 #define MR_ROT(x) ((x) & (uint64_t)63)
@@ -455,18 +552,15 @@ static uint64_t calc_best_error(struct hashcontext *ctx, uint n_params)
 	return sum + min_h * min_h * min_h;
 }
 
-static inline uint64_t next_param(struct rng *rng, uint64_t round,
-				  uint64_t *params, uint n_params)
+static void populate_db(struct hashcontext *ctx)
 {
-	/* these ones work perfect for the first 2 params in
-	   ldap_display_names */
 	static const uint64_t known_good[] = {
 		MUL_ROT_TO_PARAM(0x04188269d579b41, 41),
-		MUL_ROT_TO_PARAM(0x055ee0661539035, 4),
+		MUL_ROT_TO_PARAM(0x055ee0661539035,  4),
 		MUL_ROT_TO_PARAM(0x072f936ef397397, 37),
 		MUL_ROT_TO_PARAM(0x0a100976e5aece9, 17),
 		MUL_ROT_TO_PARAM(0x0b3bfa87a455f57, 20),
-		MUL_ROT_TO_PARAM(0x0f0b48e7f36611d,26),
+		MUL_ROT_TO_PARAM(0x0f0b48e7f36611d, 26),
 		MUL_ROT_TO_PARAM(0x0f9e774af7f03fb, 29),
 		MUL_ROT_TO_PARAM(0x106a3a1bc2e6c53, 30),
 		MUL_ROT_TO_PARAM(0x127925c6740e3ed, 17),
@@ -474,8 +568,9 @@ static inline uint64_t next_param(struct rng *rng, uint64_t round,
 		MUL_ROT_TO_PARAM(0x1979f230b563735, 29),
 		MUL_ROT_TO_PARAM(0x1bea95023ed9d1b, 17),
 		MUL_ROT_TO_PARAM(0x1c87c0f29ddf723, 41),
+		MUL_ROT_TO_PARAM(0x248f078bc51eb71, 30),
 		MUL_ROT_TO_PARAM(0x24cdd66771fd87b, 40),
-		MUL_ROT_TO_PARAM(0x25742a1f6dc1d33, 7),
+		MUL_ROT_TO_PARAM(0x25742a1f6dc1d33,  7),
 		MUL_ROT_TO_PARAM(0x2ba2b86b604b4e7, 11),
 		MUL_ROT_TO_PARAM(0x3327c9d47ab5d01, 29),
 		MUL_ROT_TO_PARAM(0x3461b73264c64b3, 44),
@@ -485,7 +580,7 @@ static inline uint64_t next_param(struct rng *rng, uint64_t round,
 		MUL_ROT_TO_PARAM(0x3f6bf5d9e80a759, 23),
 		MUL_ROT_TO_PARAM(0x408402f9523bba7, 32),
 		MUL_ROT_TO_PARAM(0x4494ea134a45de3, 42),
-		MUL_ROT_TO_PARAM(0x45d2ea0a4745b61, 7),
+		MUL_ROT_TO_PARAM(0x45d2ea0a4745b61,  7),
 		MUL_ROT_TO_PARAM(0x4bf9dc8c4fa9e77, 34),
 		MUL_ROT_TO_PARAM(0x55b4dfda7eee419, 41),
 		MUL_ROT_TO_PARAM(0x5c441685af001d7, 29),
@@ -497,8 +592,22 @@ static inline uint64_t next_param(struct rng *rng, uint64_t round,
 		MUL_ROT_TO_PARAM(0x72adddaa227f727, 13),
 		MUL_ROT_TO_PARAM(0x7db6e30b60fe3cf, 24),
 	};
-	if (round < ARRAY_SIZE(known_good)) {
-		return known_good[round];
+
+	for (int i = 0; i < ARRAY_SIZE(known_good); i++) {
+		add_db_param(ctx, known_good[i]);
+	}
+}
+
+
+static inline uint64_t next_param(struct hashcontext *ctx,
+				  uint64_t round,
+				  uint64_t *params, uint n_params)
+{
+	/* these ones work perfect for the first 2 params in
+	   ldap_display_names */
+	struct rng *rng = ctx->rng;
+	if (round < ctx->n_good_params) {
+		return ctx->good_params[round];
 	}
 	uint64_t n_bits = n_params + BASE_N - 1;
 	uint64_t p, rot;
@@ -816,7 +925,7 @@ static uint do_squashing_round(struct hashcontext *ctx,
 
 	for (j = 0; j < attempts; j++) {
 		/* we don't need to calculate the full hash */
-		uint64_t param = next_param(ctx->rng, j, params, n + 1);
+		uint64_t param = next_param(ctx, j, params, n + 1);
 		param &= ~MR_ROT_MASK;
 		struct tuple_list t;
 		uint8_t ones[64];
@@ -837,7 +946,7 @@ static uint do_squashing_round(struct hashcontext *ctx,
 				}
 				for (h = 0; h < 64; h++) {
 					uint x = ones[h];
-					scores[h] += (1 << MIN(x, 24)) + x * x - 1;
+					scores[h] += (1 << MIN(x, 24)) + x * k - 1;
 				}
  			}
 			if (k < max && k > min) {
@@ -882,6 +991,7 @@ static uint do_squashing_round(struct hashcontext *ctx,
 	printf("past half_way %'lu times\n", past_half_way);
 	printf("short_cuts: %'lu\n", short_cuts);
 	params[n] = best_param;
+	add_db_param(ctx,  best_param);
 	PRINT_TIMER(squashing);
 	uint best_collisions = test_params_running(ctx, params, n + 1,
 						   UINT_MAX);
@@ -937,7 +1047,7 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 
 	for (j = 0; j < attempts; j++) {
 		/* we don't need to calculate the full hash */
-		uint64_t param = next_param(ctx->rng, j, params, n + 1);
+		uint64_t param = next_param(ctx, j, params, n + 1);
 		uint64_t non_collisions = ~0ULL;
 		uint64_t mul = MR_MUL(param);
 		param &= ~MR_ROT_MASK;
@@ -1035,6 +1145,7 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 	       past_triples_chance);
 
 	params[n] = best_param;
+	add_db_param(ctx,  best_param);
 	PRINT_TIMER(penultimate);
 	best_collisions += 2 * tuples.tuples[4].n + tuples.tuples[3].n;
 	uint best_collisions2 = test_params_running(ctx, params, n,
@@ -1084,7 +1195,7 @@ static uint do_last_round(struct hashcontext *ctx,
 		 */
 		for (j = 0; j < exact_attempts; j++) {
 			/* we don't need to calculate the full hash */
-			uint64_t p = next_param(ctx->rng, j, params, N_PARAMS);
+			uint64_t p = next_param(ctx, j, params, N_PARAMS);
 			uint64_t non_collisions = (uint64_t)-1ULL;
 			for (i = 0; i < pairs.n; i++) {
 				uint64_t raw_a = pairs.raw[i * 2];
@@ -1137,7 +1248,7 @@ static uint do_last_round(struct hashcontext *ctx,
 
 	for (j = 0; j < attempts; j++) {
 		/* we don't need to calculate the full hash */
-		uint64_t p = next_param(ctx->rng, j, params, N_PARAMS);
+		uint64_t p = next_param(ctx, j, params, N_PARAMS);
 		collisions = test_all_pairs_all_rot(&p, pairs, N_PARAMS,
 						    best_collisions, 0);
 
@@ -1154,6 +1265,7 @@ static uint do_last_round(struct hashcontext *ctx,
 	}
   win:
 	params[N_PARAMS - 1] = best_param;
+	add_db_param(ctx,  best_param);
 	PRINT_TIMER(last);
 	best_collisions = test_params_running(ctx, params, N_PARAMS,
 					      best_collisions);
@@ -1164,7 +1276,7 @@ static uint do_last_round(struct hashcontext *ctx,
 }
 
 
-static void do_l2_round(struct hashcontext *ctx,
+static uint do_l2_round(struct hashcontext *ctx,
 			struct multi_rot *c,
 			uint64_t attempts,
 			uint n)
@@ -1182,7 +1294,7 @@ static void do_l2_round(struct hashcontext *ctx,
 	printf("making %'lu attempts\n", attempts);
 
 	for (j = 0; j < attempts; j++) {
-		params[n] = next_param(ctx->rng, j, params, n);
+		params[n] = next_param(ctx, j, params, n);
 		collisions2 = test_params_with_l2_running(
 			ctx,
 			params,
@@ -1211,8 +1323,13 @@ static void do_l2_round(struct hashcontext *ctx,
 	}
   done:
 	params[n] = best_param;
+	add_db_param(ctx,  best_param);
+	collisions = test_params_running(ctx, params,
+					 n + 1,
+					 UINT_MAX);
 	update_running_hash(ctx, params, n + 1);
 	PRINT_TIMER(l2);
+	return collisions;
 }
 
 
@@ -1329,43 +1446,63 @@ static void init_multi_rot(struct hashcontext *ctx,
 			   uint64_t n_candidates)
 {
 	uint i;
+	uint best;
 	uint worst = ctx->n;
 	uint64_t attempts;
 	uint64_t original_n_strings = ctx->n;
 	uint64_t *params = c->params;
 	update_running_hash(ctx, params, 0);
 
-	do_l2_round(ctx, c, n_candidates * 20UL, 0);
-
-	for (i = 1; i < N_PARAMS - 2; i++) {
-		attempts = (uint64_t)n_candidates * original_n_strings / ctx->n;
-		worst = find_non_colliding_strings(ctx, params, i, false);
-
-		if (worst > MAX_SMALL_TUPLE) {
-			do_l2_round(ctx, c, attempts, i);
-		} else {
-			do_squashing_round(ctx, c, attempts, i,
-					   worst, UINT_MAX);
-		}
-	}
-
-	worst = find_non_colliding_strings(ctx, params, N_PARAMS - 2, false);
-	if (worst > 4) {
-		printf("the situation is hopeless. stopping\n");
+	best = do_l2_round(ctx, c, n_candidates * 20UL, 0);
+	if (best == 0) {
+		printf("success in first round!\n");
+		c->collisions = best;
 		return;
 	}
+	if (N_PARAMS > 2) {
+		for (i = 1; i < N_PARAMS - 2; i++) {
+			attempts = n_candidates * original_n_strings / ctx->n;
+			worst = find_non_colliding_strings(ctx, params, i,
+							   false);
 
-	/* special cases for the last two rounds */
-	attempts = (uint64_t)n_candidates;
-	do_penultimate_round(ctx, c, attempts * 2, N_PARAMS - 2, UINT_MAX);
+			if (worst > MAX_SMALL_TUPLE) {
+				best = do_l2_round(ctx, c, attempts, i);
+			} else {
+				best = do_squashing_round(ctx, c, attempts, i,
+							  worst, UINT_MAX);
+			}
+			printf("best %u\n", best);
+			if (best == 0) {
+				best = test_params_running(ctx, params, i,
+							   UINT_MAX);
+				if (best == 0) {
+					printf("early success in round %u\n",
+					       i);
+					c->collisions = 0;
+					return;
+				}
+			}
+		}
 
-	c->collisions = do_last_round(ctx, c, attempts);
+		worst = find_non_colliding_strings(ctx, params, N_PARAMS - 2, false);
+		if (worst > 4) {
+			printf("the situation is hopeless. stopping\n");
+			return;
+		}
+		/* special cases for the last two rounds */
+		do_penultimate_round(ctx, c, n_candidates * 2,
+				     N_PARAMS - 2, UINT_MAX);
+	}
+	if (N_PARAMS > 1) {
+		c->collisions = do_last_round(ctx, c, n_candidates);
+	} else {
+		c->collisions = best;
+	}
 }
 
 
-
-struct hashcontext *new_context(const char *filename, uint bits,
-				struct rng *rng)
+static struct hashcontext *new_context(const char *filename, uint bits,
+				       struct rng *rng, const char *db_name)
 {
 	struct strings strings = load_strings(filename);
 	struct hashdata *data = new_hashdata(&strings);
@@ -1381,6 +1518,10 @@ struct hashcontext *new_context(const char *filename, uint bits,
 	ctx->bits = bits;
 	ctx->rng = rng;
 	ctx->string_mem = strings.mem;
+	ctx->db_name = db_name;
+	read_db(ctx, db_name);
+	populate_db(ctx);
+
 	return ctx;
 }
 
@@ -1394,10 +1535,12 @@ static void free_context(struct hashcontext *ctx)
 }
 
 static int find_hash(const char *filename, uint bits,
-		     uint n_candidates, struct rng *rng)
+		     uint n_candidates, struct rng *rng,
+		     const char *db_filename)
 {
 
-	struct hashcontext *ctx = new_context(filename, bits, rng);
+	struct hashcontext *ctx = new_context(filename, bits, rng,
+					       db_filename);
 
 	if (! check_raw_hash(ctx)) {
 		printf("This will never work because the raw hash collides\n");
@@ -1416,7 +1559,8 @@ static int find_hash(const char *filename, uint bits,
 		retry(ctx, &c, n_candidates, N_PARAMS, 20, 4, true);
 	}
 
-	struct hashcontext *ctx2 = new_context(filename, bits, rng);
+	struct hashcontext *ctx2 = new_context(filename, bits, rng,
+					       db_filename);
 
 	describe_hash(ctx2, &c, NULL, N_PARAMS, true);
 	free(c.params);
@@ -1426,32 +1570,55 @@ static int find_hash(const char *filename, uint bits,
 }
 
 
-int main(int argc, char *argv[])
+int main(int argc, const char *argv[])
 {
 	setlocale(LC_NUMERIC, "");
-	if (argc < 3) {
-		printf("usage: %s <string list> <hash bits>\n\n",
-		       argv[0]);
-		printf("string list is one string per line.\n");
-	}
-	printf("got %s %s %s\n",
-	       argv[0], argv[1], argv[2]);
+	uint64_t bits = 0;
+	uint64_t effort = 1000000;
+	uint64_t rng_seed = -1ULL;
+	char *db = NULL;
+	const char *strings = NULL;
+	struct rng rng;
 
-	uint bits = strtoul(argv[2], NULL, 10);
-	if (bits > 28) {
-		printf("A %u bit hash is too big for me! try 28 or less.\n",
+	struct argparse argparse;
+	struct argparse_option options[] = {
+		OPT_HELP(),
+		OPT_UINT64('b', "bits", &bits,
+			   "find a hash with this many bits"),
+		OPT_UINT64('e', "effort", &effort,
+			   "make roughly this many attempts per round"),
+		OPT_UINT64('r', "rng-seed", &rng_seed,
+			   "seed random number generator thus"),
+		OPT_STRING('d', "parameter-db", &db,
+			   "load/save good params here"),
+		OPT_END(),
+	};
+	static const char *const usages[] = {
+		"test_argparse [options] [--] <string list>",
+		NULL,
+	};
+
+	argparse_init(&argparse, options, usages, 0);
+	argc = argparse_parse(&argparse, argc, argv);
+	if (argc != 1) {
+		printf("USAGE: %s\n", usages[0]);
+		printf("string list is one string per line.\n");
+		return 1;
+	} else {
+		strings = argv[0];
+		printf("using string list: %s.\n", strings);
+	}
+
+	if (bits > 24) {
+		printf("A %lu bit hash is too big for me! try 24 or less.\n",
 		       bits);
 		return 2;
 	}
 
-	uint n_candidates = strtoul(argv[3], NULL, 10);
-	printf("Using %'u candidates per round \n", n_candidates);
-
-	struct rng rng;
-#if DETERMINISTIC
-	rng_init(&rng, 12345);
-#else
-	rng_random_init(&rng);
-#endif
-	return find_hash(argv[1], bits, n_candidates, &rng);
+	if (rng_seed == -1ULL) {
+		rng_random_init(&rng);
+	} else {
+		rng_init(&rng, rng_seed);
+	}
+	return find_hash(strings, bits, effort, &rng, db);
 }
