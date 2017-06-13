@@ -1513,7 +1513,7 @@ static int find_hash(const char *filename, uint bits,
 	}
 
 	struct hashcontext *ctx2 = new_context(filename, bits, rng,
-					       db_filename);
+					       NULL);
 
 	describe_hash(ctx2, &c, NULL, N_PARAMS, true);
 	free(c.params);
