@@ -51,6 +51,29 @@ struct hash_tuples {
 
 uint N_PARAMS = 0;
 
+
+#if 1
+#define MR_ROT(x) ((x) & (uint64_t)63)
+#define MR_MUL(x) (((x) >> 5) | 1)
+#define MR_ROT_STEP 1
+#define MR_ROT_MASK 63UL
+#define MUL_ROT_TO_PARAM(m, r)((((m) & ~1ULL) << 5) | (r))
+#else
+#define MR_ROT(x) ((x) >> 58UL)
+#define MR_MUL(x) (((x) << 1) | 1)
+#define MR_ROT_STEP (1ULL << 58)
+#define MR_ROT_MASK (63UL << 58)
+#define MUL_ROT_TO_PARAM(m, r)(((m) >> 1) | ((r) << 58))
+#endif
+
+#define MR_MASK(i) (((i) == 0) ?					\
+		    (1 << BASE_N) - 1 :					\
+		    (1 << (BASE_N + (i) - 1)))
+
+#define MR_COMPONENT(x, mul, rot, mask)(ROTATE((x * mul), rot) & mask)
+
+
+
 //#define FNV 1099511628211UL
 #define FNV 16777619
 
@@ -142,8 +165,6 @@ static void save_db(struct hashcontext *ctx)
 		FILE *f = fopen(ctx->db_name, "w");
 		fwrite(ctx->good_params, sizeof(uint64_t),
 		       ctx->n_good_params, f);
-		//printf("Saved %u good params in %s\n",
-		//       ctx->n_good_params, ctx->db_name);
 	}
 }
 
@@ -155,7 +176,8 @@ static void add_db_param(struct hashcontext *ctx, uint64_t param)
 	///XXX perhaps sort or something
 	for (uint i = 0; i < ctx->n_good_params; i++) {
 		if (ctx->good_params[i] == param) {
-			printf("param #%d %lx already saved\n", i, param);
+			printf("param #%d %lx (%lx↻%lu) already saved\n", i,
+			       param, MR_MUL(param), MR_ROT(param));
 			return;
 		}
 	}
@@ -213,26 +235,6 @@ static void read_db(struct hashcontext *ctx, const char *db_name)
 }
 
 
-#if 1
-#define MR_ROT(x) ((x) & (uint64_t)63)
-#define MR_MUL(x) (((x) >> 5) | 1)
-#define MR_ROT_STEP 1
-#define MR_ROT_MASK 63UL
-#define MUL_ROT_TO_PARAM(m, r)((((m) & ~1ULL) << 5) | (r))
-#else
-#define MR_ROT(x) ((x) >> 58UL)
-#define MR_MUL(x) (((x) << 1) | 1)
-#define MR_ROT_STEP (1ULL << 58)
-#define MR_ROT_MASK (63UL << 58)
-#define MUL_ROT_TO_PARAM(m, r)(((m) >> 1) | ((r) << 58))
-#endif
-
-#define MR_MASK(i) (((i) == 0) ?					\
-		    (1 << BASE_N) - 1 :					\
-		    (1 << (BASE_N + (i) - 1)))
-
-#define MR_COMPONENT(x, mul, rot, mask)(ROTATE((x * mul), rot) & mask)
-
 static inline uint32_t hash_component(uint64_t *params, uint i, uint64_t x)
 {
 	uint64_t param = params[i];
@@ -273,7 +275,6 @@ static inline void update_running_hash(struct hashcontext *ctx,
 			params, n);
 	}
 }
-
 
 static bool reorder_params(struct multi_rot *c, uint a, uint b)
 {
