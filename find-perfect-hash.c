@@ -1336,12 +1336,10 @@ static void retry(struct hashcontext *ctx,
 		}
 		if (stats.max == 2) {
 			do_last_round(ctx, c, attempts);
-#if 1
 		} else if (stats.max <= 4 && do_penultimate) {
 			do_penultimate_round(ctx, c, attempts * 2,
 					     n_params - 1,
 					     target * 2);
-#endif
 		} else {
 			do_squashing_round(ctx, c, attempts * 2,
 					   n_params - 1,
