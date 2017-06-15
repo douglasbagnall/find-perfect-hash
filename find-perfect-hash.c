@@ -1398,7 +1398,8 @@ static void retry(struct hashcontext *ctx,
 
 static void init_multi_rot(struct hashcontext *ctx,
 			   struct multi_rot *c,
-			   uint64_t n_candidates)
+			   uint64_t n_candidates,
+			   uint64_t post_squash_retry)
 {
 	uint i;
 	uint best;
@@ -1439,6 +1440,10 @@ static void init_multi_rot(struct hashcontext *ctx,
 			}
 		}
 
+		if (post_squash_retry) {
+			retry(ctx, c, n_candidates, N_PARAMS - 2,
+			      post_squash_retry, 20, false);
+		}
 		worst = find_non_colliding_strings(ctx, params, N_PARAMS - 2, false);
 		if (worst > 4) {
 			printf("the situation is hopeless. stopping\n");
@@ -1490,7 +1495,8 @@ static void free_context(struct hashcontext *ctx)
 
 static int find_hash(const char *filename, uint bits,
 		     uint n_candidates, struct rng *rng,
-		     const char *db_filename)
+		     const char *db_filename,
+		     uint64_t post_squash_retry)
 {
 
 	struct hashcontext *ctx = new_context(filename, bits, rng,
@@ -1504,7 +1510,7 @@ static int find_hash(const char *filename, uint bits,
 	struct multi_rot c;
 	c.params = calloc(N_PARAMS, sizeof(uint64_t));
 	c.collisions = UINT_MAX;
-	init_multi_rot(ctx, &c, n_candidates);
+	init_multi_rot(ctx, &c, n_candidates, post_squash_retry);
 
 	if (c.collisions != 0 && false) {
 		printf("Final hash from initial search\n");
@@ -1530,6 +1536,7 @@ int main(int argc, const char *argv[])
 	uint64_t bits = 0;
 	uint64_t effort = 1000000;
 	uint64_t rng_seed = -1ULL;
+	uint64_t post_squash_retry = 0ULL;
 	char *db = NULL;
 	const char *strings = NULL;
 	struct rng rng;
@@ -1545,6 +1552,8 @@ int main(int argc, const char *argv[])
 			   "seed random number generator thus"),
 		OPT_STRING('d', "parameter-db", &db,
 			   "load/save good params here"),
+		OPT_UINT64('R', "retry-rounds", &post_squash_retry,
+			   "post-squash retry this many times"),
 		OPT_END(),
 	};
 	static const char *const usages[] = {
@@ -1574,5 +1583,5 @@ int main(int argc, const char *argv[])
 	} else {
 		rng_init(&rng, rng_seed);
 	}
-	return find_hash(strings, bits, effort, &rng, db);
+	return find_hash(strings, bits, effort, &rng, db, post_squash_retry);
 }
