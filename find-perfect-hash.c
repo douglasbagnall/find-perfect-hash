@@ -192,7 +192,8 @@ static void add_db_param(struct hashcontext *ctx, uint64_t param)
 	}
 	ctx->good_params[ctx->n_good_params] = param;
 	ctx->n_good_params++;
-	printf("saved param #%u %lx\n", ctx->n_good_params, param);
+	printf("saved param  #%u %lx (%lx↻%lu)\n", ctx->n_good_params,
+	       param, MR_MUL(param), MR_ROT(param));
 	save_db(ctx);
 }
 
