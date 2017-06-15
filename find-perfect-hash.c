@@ -947,7 +947,6 @@ static uint do_squashing_round(struct hashcontext *ctx,
 	printf("past half_way %'lu times\n", past_half_way);
 	printf("short_cuts: %'lu\n", short_cuts);
 	params[n] = best_param;
-	add_db_param(ctx,  best_param);
 	PRINT_TIMER(squashing);
 	uint best_collisions = test_params_running(ctx, params, n + 1,
 						   UINT_MAX);
@@ -1101,7 +1100,6 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 	       past_triples_chance);
 
 	params[n] = best_param;
-	add_db_param(ctx,  best_param);
 	PRINT_TIMER(penultimate);
 	best_collisions += 2 * tuples.tuples[4].n + tuples.tuples[3].n;
 	uint best_collisions2 = test_params_running(ctx, params, n,
@@ -1221,7 +1219,6 @@ static uint do_last_round(struct hashcontext *ctx,
 	}
   win:
 	params[N_PARAMS - 1] = best_param;
-	add_db_param(ctx,  best_param);
 	PRINT_TIMER(last);
 	best_collisions = test_params_running(ctx, params, N_PARAMS,
 					      best_collisions);
@@ -1279,7 +1276,6 @@ static uint do_l2_round(struct hashcontext *ctx,
 	}
   done:
 	params[n] = best_param;
-	add_db_param(ctx,  best_param);
 	collisions = test_params_running(ctx, params,
 					 n + 1,
 					 UINT_MAX);
@@ -1359,6 +1355,7 @@ static void retry(struct hashcontext *ctx,
 				      "equal best score %u; param %lx\n"),
 			       score, params[n_params - 1]);
 			uint k = find_worst_param(ctx, c, n_params, &new_mean_score);
+			add_db_param(ctx, params[n_params - 1]);
 			if (k != j || new_mean_score < mean_score) {
 				target = score;
 				printf(COLOUR(C_BLUE,
@@ -1373,6 +1370,7 @@ static void retry(struct hashcontext *ctx,
 				      "new best score %u; param %lx\n"),
 			       score, params[n_params - 1]);
 			target = score;
+			add_db_param(ctx, params[n_params - 1]);
 		}
 		reorder_params(c, j, n_params - 1);
 
@@ -1414,6 +1412,8 @@ static void init_multi_rot(struct hashcontext *ctx,
 		c->collisions = best;
 		return;
 	}
+	add_db_param(ctx, params[0]);
+
 	if (N_PARAMS > 2) {
 		for (i = 1; i < N_PARAMS - 2; i++) {
 			attempts = n_candidates * original_n_strings / ctx->n;
@@ -1426,6 +1426,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 				best = do_squashing_round(ctx, c, attempts, i,
 							  worst, UINT_MAX);
 			}
+			add_db_param(ctx, params[i]);
 			printf("best %u\n", best);
 			if (best == 0) {
 				best = test_params_running(ctx, params, i,
@@ -1451,9 +1452,11 @@ static void init_multi_rot(struct hashcontext *ctx,
 		/* special cases for the last two rounds */
 		do_penultimate_round(ctx, c, n_candidates * 2,
 				     N_PARAMS - 2, UINT_MAX);
+		add_db_param(ctx, N_PARAMS - 2);
 	}
 	if (N_PARAMS > 1) {
 		c->collisions = do_last_round(ctx, c, n_candidates);
+		add_db_param(ctx, N_PARAMS - 1);
 	} else {
 		c->collisions = best;
 	}
