@@ -1303,9 +1303,16 @@ static void retry(struct hashcontext *ctx,
 					   stats.max,
 					   UINT_MAX);
 		}
+		if (params[n_params - 1] == victim) {
+			reorder_params(c, j, n_params - 1);
+			printf(COLOUR(C_BLUE,
+				      "nothing new here\n"));
+			PRINT_TIMER(retry);
+			continue;
+		}
 
 		uint collisions = describe_hash(ctx, c, &orig, n_params, false);
-		uint score = test_params_l2(ctx, c->params, n_params);
+		uint score = test_params_l2(ctx, params, n_params);
 		if (score > target) {
 			printf("collisions %u, score %u target %u\n",
 			       collisions, score, target);
