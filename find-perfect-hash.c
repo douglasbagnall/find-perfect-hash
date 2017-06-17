@@ -241,6 +241,25 @@ static void read_db(struct hashcontext *ctx, const char *db_name)
 	}
 }
 
+static void import_text_parameters(struct hashcontext *ctx, const char *filename)
+{
+	/* fits exactly one case at the moment */
+	int matched;
+	uint64_t mul, rot, param;
+	FILE *f = fopen(filename, "r");
+	while (true) {
+		matched = fscanf(f, " ×%lx ↻%lu & %*x", &mul, &rot);
+		if (matched != 2) {
+			printf("match %d, stopping\n", matched);
+			break;
+		}
+		param = MUL_ROT_TO_PARAM(mul, rot);
+		printf("found %lx\n", param);
+		add_db_param(ctx, param);
+	}
+	fclose(f);
+}
+
 
 static inline uint32_t hash_component(uint64_t *params, uint i, uint64_t x)
 {
@@ -1508,6 +1527,7 @@ static void free_context(struct hashcontext *ctx)
 static int find_hash(const char *filename, uint bits,
 		     uint n_candidates, struct rng *rng,
 		     const char *db_filename,
+		     const char *import_text,
 		     uint64_t post_squash_retry)
 {
 
@@ -1519,6 +1539,9 @@ static int find_hash(const char *filename, uint bits,
 		exit(1);
 	}
 
+	if (import_text) {
+		import_text_parameters(ctx, import_text);
+	}
 	struct multi_rot c;
 	c.params = calloc(N_PARAMS, sizeof(uint64_t));
 	c.collisions = UINT_MAX;
@@ -1550,6 +1573,7 @@ int main(int argc, const char *argv[])
 	uint64_t rng_seed = -1ULL;
 	uint64_t post_squash_retry = 0ULL;
 	char *db = NULL;
+	char *import_text = NULL;
 	const char *strings = NULL;
 	struct rng rng;
 
@@ -1564,6 +1588,8 @@ int main(int argc, const char *argv[])
 			   "seed random number generator thus"),
 		OPT_STRING('d', "parameter-db", &db,
 			   "load/save good params here"),
+		OPT_STRING(0, "import-parameters", &import_text,
+			   "import parameters implied here"),
 		OPT_UINT64('R', "retry-rounds", &post_squash_retry,
 			   "post-squash retry this many times"),
 		OPT_END(),
@@ -1595,5 +1621,6 @@ int main(int argc, const char *argv[])
 	} else {
 		rng_init(&rng, rng_seed);
 	}
-	return find_hash(strings, bits, effort, &rng, db, post_squash_retry);
+	return find_hash(strings, bits, effort, &rng, db, import_text,
+			 post_squash_retry);
 }
