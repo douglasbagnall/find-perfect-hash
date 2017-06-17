@@ -15,5 +15,7 @@ TAGS: find-perfect-hash.c
 .c.o:
 	$(CC) -c -MMD -o $@ $<  $(ALL_CFLAGS)
 
+find-perfect-hash.c:  find-perfect-hash.h
+
 find-perfect-hash: find-perfect-hash.o argparse/argparse.o Makefile
 	$(CC) -Iargparse -Wl,-O1 $(filter %.o,$^) -lm  -I. -o $@
