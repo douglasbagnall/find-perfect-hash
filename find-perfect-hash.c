@@ -163,8 +163,14 @@ static void save_db(struct hashcontext *ctx)
 		rename(ctx->db_name, backup);
 		free(backup);
 		FILE *f = fopen(ctx->db_name, "w");
-		fwrite(ctx->good_params, sizeof(uint64_t),
-		       ctx->n_good_params, f);
+		size_t bytes = fwrite(ctx->good_params, sizeof(uint64_t),
+				      ctx->n_good_params, f);
+		fclose(f);
+		if (bytes != ctx->n_good_params) {
+			printf(COLOUR(C_RED, "could not write db file"
+				      "(wrote %zu expected %lu)\n"),
+			       bytes, ctx->n_good_params * sizeof(uint64_t));
+		}
 	}
 }
 
