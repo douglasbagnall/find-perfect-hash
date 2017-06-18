@@ -1,5 +1,10 @@
 *.pgm
 *.pbm
 *~
-*.o
+*.[od]
 /find-perfect-hash
+.emacs.*
+.gdb_history
+rng-loop-finder
+find-perfect-hash
+TAGS
