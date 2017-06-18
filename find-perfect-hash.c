@@ -640,18 +640,19 @@ static uint test_all_pairs_all_rot(uint64_t *param,
 }
 
 
-struct size_extrema {
+struct tuple_stats {
 	uint min;
 	uint max;
-	uint mean;
+	double mean;
+	double stddev;
 	uint count;
 };
 
-static struct size_extrema find_unresolved_small_tuples(struct hashcontext *ctx,
-							uint64_t *params, uint n,
-							struct hash_tuples *dest,
-							uint max_size,
-							bool silent)
+static struct tuple_stats find_unresolved_small_tuples(struct hashcontext *ctx,
+						       uint64_t *params, uint n,
+						       struct hash_tuples *dest,
+						       uint max_size,
+						       bool silent)
 {
 	uint j;
 	uint32_t hash_mask = (1 << ctx->bits) - 1;
@@ -665,7 +666,7 @@ static struct size_extrema find_unresolved_small_tuples(struct hashcontext *ctx,
 		max_size = MIN(max_size, MAX_SMALL_TUPLE);
 	}
 	dest->max_size = max_size;
-	struct size_extrema size_bounds = {2, max_size, 0};
+	struct tuple_stats stats = {2, max_size, 0, 0, 0};
 
 	for (j = 0; j < ctx->n; j++) {
 		uint32_t raw = ctx->data[j].raw_hash;
@@ -692,6 +693,7 @@ static struct size_extrema find_unresolved_small_tuples(struct hashcontext *ctx,
 	bool started = false;
 	uint max_count = 1;
 	uint64_t sum = 0;
+	uint64_t sum2 = 0;
 	uint64_t n_tuples = 0;
 	uint max_occuring = 0;
 	for (j = max_size; j >= 2; j--) {
@@ -703,11 +705,12 @@ static struct size_extrema find_unresolved_small_tuples(struct hashcontext *ctx,
 	for (j = 2; j <= max_size; j++) {
 		uint count = size_counts[j];
 		if (count == 0 && ! started) {
-			size_bounds.min = j + 1;
+			stats.min = j + 1;
 			continue;
 		}
 		started = true;
 		sum += count * j;
+		sum2 += count * j * j;
 		n_tuples += count;
 
 		const char *s = "#############################################";
@@ -722,15 +725,17 @@ static struct size_extrema find_unresolved_small_tuples(struct hashcontext *ctx,
 			       len, s);
 		}
 		if (count) {
-			size_bounds.max = j;
+			stats.max = j;
 		}
 	}
 	if (! silent) {
 		printf("%4u tuples of size > %u\n", size_counts[max_size + 1],
 		       max_occuring);
 	}
-	size_bounds.mean = (sum + (n_tuples / 2)) / n_tuples;
-	size_bounds.count = n_tuples;
+	double scale = 1.0 / n_tuples;
+	stats.mean = sum * scale;
+	stats.stddev = (sum2 - sum * sum * scale) * scale;
+	stats.count = n_tuples;
 	dest->tuples[0] = (struct tuple_list){NULL, 0};
 	dest->tuples[1] = (struct tuple_list){NULL, 0};
 
@@ -758,7 +763,7 @@ static struct size_extrema find_unresolved_small_tuples(struct hashcontext *ctx,
 	}
 	free(tuples);
 	free(size_counts);
-	return size_bounds;
+	return stats;
 }
 
 static void free_tuple_data(struct hash_tuples *tuples)
@@ -817,19 +822,20 @@ static uint do_squashing_round(struct hashcontext *ctx,
 
 	uint min, mean;
 	max = MIN(max, MAX_SMALL_TUPLE);
-	struct size_extrema size_bounds = find_unresolved_small_tuples(ctx, params,
-								       n, &tuples,
-								       max, false);
-	min = size_bounds.min;
-	max = size_bounds.max;
-	mean = size_bounds.mean;
+	struct tuple_stats stats = find_unresolved_small_tuples(ctx, params,
+								n, &tuples,
+								max, false);
+	min = stats.min;
+	max = stats.max;
+	mean = stats.mean;
 	uint32_t mask = MR_MASK(n);
 
 	attempts /= 20;
-	attempts *= MAX(MIN(mean, 25), 5);
+	attempts *= MAX(MIN(stats.mean, 25), 5);
 
-	printf("making %'lu attempts. mask %u max %u min %u mean %u\n",
-	       attempts, mask, max, min, mean);
+	printf("making %'lu attempts. mask %u max %u min %u "
+	       "mean %.1f dev %.1f\n",
+	       attempts, mask, max, min, stats.mean, stats.stddev);
 
 	START_TIMER(squashing);
 
@@ -931,10 +937,10 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 	struct hash_tuples tuples;
 	uint n_bits = n + BASE_N - 1;
 	uint64_t past_triples = 0;
-	struct size_extrema size_bounds = find_unresolved_small_tuples(ctx, params, n,
-								       &tuples, 4, false);
-	if (size_bounds.max > 4) {
-		printf(COLOUR(C_RED, "max size %u\n"), size_bounds.max);
+	struct tuple_stats stats = find_unresolved_small_tuples(ctx, params, n,
+								&tuples, 4, false);
+	if (stats.max > 4) {
+		printf(COLOUR(C_RED, "max size %u\n"), stats.max);
 		return UINT_MAX;
 	}
 
@@ -1258,7 +1264,7 @@ static void retry(struct hashcontext *ctx,
 	uint64_t *params = c->params;
 	uint i;
 	struct hash_tuples tuples;
-	static struct size_extrema stats;
+	static struct tuple_stats stats;
 	struct multi_rot orig = *c;
 	orig.params = calloc(N_PARAMS, sizeof(uint64_t));
 	memcpy(orig.params, c->params, N_PARAMS * sizeof(uint64_t));
