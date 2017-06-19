@@ -1305,7 +1305,7 @@ static void retry(struct hashcontext *ctx,
 					     n_params - 1,
 					     target * 2);
 		} else {
-			do_squashing_round(ctx, c, attempts * 2,
+			do_squashing_round(ctx, c, attempts,
 					   n_params - 1,
 					   stats.max,
 					   UINT_MAX);
