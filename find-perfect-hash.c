@@ -1079,7 +1079,8 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 
 static uint do_last_round(struct hashcontext *ctx,
 			  struct multi_rot *c,
-			  uint64_t attempts)
+			  uint64_t attempts,
+			  uint64_t n_params)
 {
 	uint i;
 	uint64_t j;
@@ -1088,7 +1089,7 @@ static uint do_last_round(struct hashcontext *ctx,
 	uint64_t *params = c->params;
 	struct hash_tuples tuples;
 
-	find_unresolved_small_tuples(ctx, params, N_PARAMS - 1,
+	find_unresolved_small_tuples(ctx, params, n_params - 1,
 				     &tuples, 2, false);
 
 	struct tuple_list pairs = tuples.tuples[2];
@@ -1114,13 +1115,13 @@ static uint do_last_round(struct hashcontext *ctx,
 		 */
 		for (j = 0; j < exact_attempts; j++) {
 			/* we don't need to calculate the full hash */
-			uint64_t p = next_param(ctx, j, params, N_PARAMS);
+			uint64_t p = next_param(ctx, j, params, n_params);
 			uint64_t non_collisions = (uint64_t)-1ULL;
 			for (i = 0; i < pairs.n; i++) {
 				uint64_t raw_a = pairs.raw[i * 2];
 				uint64_t raw_b = pairs.raw[i * 2 + 1];
 				uint64_t rot_map = test_pair_all_rot(p, raw_a, raw_b,
-								     N_PARAMS);
+								     n_params);
 
 				non_collisions &= rot_map;
 				if (non_collisions) {
@@ -1141,7 +1142,7 @@ static uint do_last_round(struct hashcontext *ctx,
 				p &= ~MR_ROT_MASK;
 				for (i = 0; i < 64; i++) {
 					collisions = test_all_pairs(p, pairs,
-								    N_PARAMS);
+								    n_params);
 
 					if (collisions == 0) {
 						best_param = p;
@@ -1167,8 +1168,8 @@ static uint do_last_round(struct hashcontext *ctx,
 
 	for (j = 0; j < attempts; j++) {
 		/* we don't need to calculate the full hash */
-		uint64_t p = next_param(ctx, j, params, N_PARAMS);
-		collisions = test_all_pairs_all_rot(&p, pairs, N_PARAMS,
+		uint64_t p = next_param(ctx, j, params, n_params);
+		collisions = test_all_pairs_all_rot(&p, pairs, n_params,
 						    best_collisions, 0);
 
 		if (collisions < best_collisions) {
@@ -1183,10 +1184,10 @@ static uint do_last_round(struct hashcontext *ctx,
 		}
 	}
   win:
-	params[N_PARAMS - 1] = best_param;
+	params[n_params - 1] = best_param;
 	add_db_param(ctx,  best_param);
 	PRINT_TIMER(last);
-	best_collisions = test_params_running(ctx, params, N_PARAMS,
+	best_collisions = test_params_running(ctx, params, n_params,
 					      best_collisions);
 
 	free_tuple_data(&tuples);
@@ -1298,7 +1299,7 @@ static void retry(struct hashcontext *ctx,
 			continue;
 		}
 		if (stats.max == 2) {
-			do_last_round(ctx, c, attempts);
+			do_last_round(ctx, c, attempts, n_params);
 		} else if (stats.max <= 4 && do_penultimate) {
 			do_penultimate_round(ctx, c, attempts * 2,
 					     n_params - 1,
@@ -1423,7 +1424,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 				     N_PARAMS - 2, UINT_MAX);
 	}
 	if (N_PARAMS > 1) {
-		c->collisions = do_last_round(ctx, c, n_candidates);
+		c->collisions = do_last_round(ctx, c, n_candidates, N_PARAMS);
 	} else {
 		c->collisions = best;
 	}
