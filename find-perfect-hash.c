@@ -1302,7 +1302,7 @@ static void retry(struct hashcontext *ctx,
 			do_last_round(ctx, c, attempts, n_params);
 		} else if (stats.max <= 4 && do_penultimate) {
 			do_penultimate_round(ctx, c, attempts * 2,
-					     n_params - 1,
+					     n_params - 2,
 					     target * 2);
 		} else {
 			do_squashing_round(ctx, c, attempts,
@@ -1412,7 +1412,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 
 		if (post_squash_retry) {
 			retry(ctx, c, n_candidates, N_PARAMS - 2,
-			      post_squash_retry, 20, false);
+			      post_squash_retry, 20, true);
 		}
 		worst = find_non_colliding_strings(ctx, params, N_PARAMS - 2, false);
 		if (worst > 4) {
