@@ -922,6 +922,7 @@ static uint do_squashing_round(struct hashcontext *ctx,
 }
 
 
+#define PAST_TRIPLES_CHANCE(n3, n4) exp((n4) * log(6./16.) + (n3) * log(6./8.))
 
 static uint do_penultimate_round(struct hashcontext *ctx,
 				 struct multi_rot *c,
@@ -945,9 +946,8 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 	}
 
 	/* triples have 6/8 chance of succeeding. quads have 6/16. */
-	double past_triples_chance = exp(tuples.tuples[4].n * log(6./16.) +
-					 tuples.tuples[3].n * log(6./8.));
-
+	double past_triples_chance = PAST_TRIPLES_CHANCE(tuples.tuples[3].n,
+							 tuples.tuples[4].n);
 
 	attempts *= (uint64_t) sqrt(1.0 / (3e-4 + past_triples_chance));
 	printf("making %'lu attempts\n", attempts);
@@ -1063,8 +1063,13 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 	       past_triples, past_triples / (attempts * 64.0),
 	       past_triples_chance);
 
-	params[n] = best_param;
-	add_db_param(ctx,  best_param);
+	if (best_param != 0) {
+		params[n] = best_param;
+		add_db_param(ctx,  best_param);
+	} else {
+		printf(COLOUR(C_RED, "NEVER past triples; NO best param\n"));
+		best_collisions = UINT_MAX;
+	}
 	PRINT_TIMER(penultimate);
 	best_collisions += 2 * tuples.tuples[4].n + tuples.tuples[3].n;
 	uint best_collisions2 = test_params_running(ctx, params, n,
@@ -1290,6 +1295,10 @@ static void retry(struct hashcontext *ctx,
 
 		stats = find_unresolved_small_tuples(ctx, params, n_params - 1,
 						     &tuples, 0, true);
+		uint n3 = tuples.tuples[3].n;
+		uint n4 = tuples.tuples[4].n;
+		double past_triples_chance = PAST_TRIPLES_CHANCE(n3, n4);
+
 		free_tuple_data(&tuples);
 
 		if (stats.max > max_tuple_size) {
@@ -1300,10 +1309,13 @@ static void retry(struct hashcontext *ctx,
 		}
 		if (stats.max == 2) {
 			do_last_round(ctx, c, attempts, n_params);
-		} else if (stats.max <= 4 && do_penultimate) {
+		} else if (stats.max <= 4 && do_penultimate &&
+			   attempts > 1.0 / past_triples_chance) {
+			printf(COLOUR(C_YELLOW,
+				      "using penultimate method\n"));
 			do_penultimate_round(ctx, c, attempts * 2,
-					     n_params - 2,
-					     target * 2);
+					     n_params - 1,
+					     UINT_MAX);
 		} else {
 			do_squashing_round(ctx, c, attempts,
 					   n_params - 1,
