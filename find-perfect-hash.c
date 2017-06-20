@@ -548,6 +548,11 @@ static inline uint64_t next_param(struct hashcontext *ctx,
 		uint64_t c = ctx->good_params[i];
 		return ROTATE(c, p);
 	}
+	if (i < ctx->n_good_params * 2 + 100) {
+		/* return a sparse number */
+		return rand64(rng) & rand64(rng);
+	}
+
 	uint64_t n_bits = n_params + BASE_N - 1;
 	/* low rotates are a bit useless, so we try to select them less
 	   often */
