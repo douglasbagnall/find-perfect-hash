@@ -513,7 +513,8 @@ static uint64_t calc_best_error(struct hashcontext *ctx, uint n_params)
 
 
 static inline uint64_t next_param(struct hashcontext *ctx,
-				  uint64_t round, uint n_params)
+				  uint64_t round, uint n_params,
+				  uint64_t best)
 {
 	/* these ones work perfect for the first 2 params in
 	   ldap_display_names */
@@ -522,11 +523,14 @@ static inline uint64_t next_param(struct hashcontext *ctx,
 	if (round < ctx->n_good_params) {
 		return ctx->good_params[round];
 	}
-
+	uint64_t c = best;
+	uint threshold = ctx->n_good_params + (best ? 10 : 0);
 	uint i = rand64(rng) & ((1 << 17) - 1);
-	if (i < ctx->n_good_params) {
-		uint64_t a, b, c;
-		c = ctx->good_params[i];
+	if (i < threshold) {
+		uint64_t a, b;
+		if (i < ctx->n_good_params) {
+			c = ctx->good_params[i];
+		}
 		p = rand64(rng);
 		/* a is always a multiplier
 		   b is never a, but can be a rotate */
@@ -542,13 +546,15 @@ static inline uint64_t next_param(struct hashcontext *ctx,
 		c ^= b;
 		return c;
 	}
-	if (i < ctx->n_good_params * 2) {
-		i -= ctx->n_good_params;
+	if (i < threshold * 2) {
+		i -= threshold;
+		if (i < ctx->n_good_params) {
+			c = ctx->good_params[i];
+		}
 		p = rand64(rng) & 63;
-		uint64_t c = ctx->good_params[i];
 		return ROTATE(c, p);
 	}
-	if (i < ctx->n_good_params * 2 + 100) {
+	if (i < threshold * 2 + 100) {
 		/* return a sparse number */
 		return rand64(rng) & rand64(rng);
 	}
@@ -873,7 +879,7 @@ static uint do_squashing_round(struct hashcontext *ctx,
 	uint64_t short_cuts = 0;
 	for (j = 0; j < attempts; j++) {
 		/* we don't need to calculate the full hash */
-		uint64_t param = next_param(ctx, j, n + 1);
+		uint64_t param = next_param(ctx, j, n + 1, best_param);
 		param &= ~MR_ROT_MASK;
 		struct tuple_list t;
 		uint8_t ones[64];
@@ -995,7 +1001,7 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 
 	for (j = 0; j < attempts; j++) {
 		/* we don't need to calculate the full hash */
-		uint64_t param = next_param(ctx, j, n + 1);
+		uint64_t param = next_param(ctx, j, n + 1, best_param);
 		uint64_t non_collisions = ~0ULL;
 		uint64_t mul = MR_MUL(param);
 		param &= ~MR_ROT_MASK;
@@ -1149,7 +1155,7 @@ static uint do_last_round(struct hashcontext *ctx,
 		 */
 		for (j = 0; j < exact_attempts; j++) {
 			/* we don't need to calculate the full hash */
-			uint64_t p = next_param(ctx, j, n_params);
+			uint64_t p = next_param(ctx, j, n_params, best_param);
 			uint64_t non_collisions = (uint64_t)-1ULL;
 			for (i = 0; i < pairs.n; i++) {
 				uint64_t raw_a = pairs.raw[i * 2];
@@ -1202,7 +1208,7 @@ static uint do_last_round(struct hashcontext *ctx,
 
 	for (j = 0; j < attempts; j++) {
 		/* we don't need to calculate the full hash */
-		uint64_t p = next_param(ctx, j, n_params);
+		uint64_t p = next_param(ctx, j, n_params, best_param);
 		collisions = test_all_pairs_all_rot(&p, pairs, n_params,
 						    best_collisions, 0);
 
@@ -1248,7 +1254,7 @@ static uint do_l2_round(struct hashcontext *ctx,
 	printf("making %'lu attempts\n", attempts);
 
 	for (j = 0; j < attempts; j++) {
-		params[n] = next_param(ctx, j, n);
+		params[n] = next_param(ctx, j, n, best_param);
 		collisions2 = test_params_with_l2_running(
 			ctx,
 			params,
