@@ -521,6 +521,7 @@ enum next_param_tricks {
 	TRICK_BEST_PARAM_ROTATE,
 	TRICK_BEST_PARAM_SHIFT,
 	TRICK_SPARSE,
+	TRICK_DENSE,
 };
 
 #define t_random(x) x
@@ -537,6 +538,7 @@ const char * const trick_names[] = {
 	[TRICK_BEST_PARAM_ROTATE] = t_fancy("best param rotate"),
 	[TRICK_BEST_PARAM_SHIFT] = t_fancy("best param shift"),
 	[TRICK_SPARSE] = t_fancy("sparse"),
+	[TRICK_DENSE] = t_fancy("dense"),
 };
 #undef t_random
 #undef t_db
@@ -601,8 +603,8 @@ static inline uint64_t next_param(struct hashcontext *ctx,
 		}
 		uint64_t mul = MR_MUL(c);
 		uint64_t rot = MR_ROT(c);
-		p = rand64(rng) & 63;
-		uint64_t shift = p & 3;
+		p = rand64(rng);
+		uint64_t shift = p & 7;
 		if (p & 8) {
 			mul <<= shift;
 			rot += shift;
@@ -618,6 +620,12 @@ static inline uint64_t next_param(struct hashcontext *ctx,
 		*used_trick = TRICK_SPARSE;
 		return rand64(rng) & rand64(rng);
 	}
+	if (i < threshold * 3 + 200) {
+		/* return a sparse number */
+		*used_trick = TRICK_DENSE;
+		return rand64(rng) | rand64(rng);
+	}
+
 	*used_trick = TRICK_NONE;
 	uint64_t n_bits = n_params + BASE_N - 1;
 	/* low rotates are a bit useless, so we try to select them less
