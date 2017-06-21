@@ -1094,6 +1094,11 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 			cd = c ^ d;
 
 			/* We need each one to not collide with 2 others.
+
+			   if ab is a non-collision, then cd must also be, or
+			   either a or b would collide with both of them.
+			   (likewise, if ab is a collision, then so must cd be).
+
 			 */
 			abcd = ((ab & cd) |
 				(ac & bd) |
