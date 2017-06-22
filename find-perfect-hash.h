@@ -19,6 +19,7 @@ struct hashcontext {
 	const char *db_name;
 	uint64_t *good_params;
 	uint n_good_params;
+	bool case_insensitive;
 };
 
 struct multi_rot {

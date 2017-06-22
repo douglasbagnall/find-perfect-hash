@@ -9,13 +9,17 @@
 //#define FNV 1099511628211UL
 #define FNV 16777619
 
-static void init_hash(struct hashdata *hash, const char *string)
+static void init_hash(struct hashdata *hash, const char *string,
+		      bool case_insensitive)
 {
 	uint32_t h = 5381;
 	uint32_t h2 = 2166136261;
 	const char *s;
 	for (s = string; *s != '\0'; s++) {
-		uint8_t c = (uint8_t)*s & 0x5f;
+		uint8_t c = (uint8_t)*s;
+		if (case_insensitive) {
+			c &= 0x5f;
+		}
 		h2 ^= c;
 		h2 *= FNV;
 		h = ((h << 5) + h) ^ c;
@@ -26,14 +30,16 @@ static void init_hash(struct hashdata *hash, const char *string)
 	hash->raw_hash = h2;
 }
 
-static struct hashdata *new_hashdata(struct strings *strings)
+static struct hashdata *new_hashdata(struct strings *strings,
+				     bool case_insensitive)
 {
 	int i;
 	struct hashdata *data = calloc(strings->n_strings,
 				       sizeof(data[0]));
 
 	for (i = 0; i < strings->n_strings; i++) {
-		init_hash(&data[i], strings->strings[i]);
+		init_hash(&data[i], strings->strings[i],
+			  case_insensitive);
 	}
 	return data;
 }
@@ -520,8 +526,6 @@ enum next_param_tricks {
 	TRICK_BEST_PARAM_BIT_FLIP,
 	TRICK_BEST_PARAM_ROTATE,
 	TRICK_BEST_PARAM_SHIFT,
-	TRICK_SPARSE,
-	TRICK_DENSE,
 };
 
 #define t_random(x) x
@@ -537,8 +541,6 @@ const char * const trick_names[] = {
 	[TRICK_BEST_PARAM_BIT_FLIP] = t_fancy("best param bit flip"),
 	[TRICK_BEST_PARAM_ROTATE] = t_fancy("best param rotate"),
 	[TRICK_BEST_PARAM_SHIFT] = t_fancy("best param shift"),
-	[TRICK_SPARSE] = t_fancy("sparse"),
-	[TRICK_DENSE] = t_fancy("dense"),
 };
 #undef t_random
 #undef t_db
@@ -557,7 +559,7 @@ static inline uint64_t next_param(struct hashcontext *ctx,
 		return ctx->good_params[round];
 	}
 	uint64_t c = best;
-	uint threshold = ctx->n_good_params + (best ? 20 : 0);
+	uint threshold = ctx->n_good_params + (best ? 30 : 0);
 	uint i = rand64(rng) & ((1 << 17) - 1);
 	if (i < threshold) {
 		uint64_t a, b;
@@ -614,16 +616,6 @@ static inline uint64_t next_param(struct hashcontext *ctx,
 		}
 		rot &= 63;
 		return MUL_ROT_TO_PARAM(mul, rot);
-	}
-	if (i < threshold * 3 + 100) {
-		/* return a sparse number */
-		*used_trick = TRICK_SPARSE;
-		return rand64(rng) & rand64(rng);
-	}
-	if (i < threshold * 3 + 200) {
-		/* return a sparse number */
-		*used_trick = TRICK_DENSE;
-		return rand64(rng) | rand64(rng);
 	}
 
 	*used_trick = TRICK_NONE;
@@ -969,7 +961,7 @@ static uint do_squashing_round(struct hashcontext *ctx,
 				}
 				for (h = 0; h < 64; h++) {
 					uint x = ones[h];
-					scores[h] += ones_target * ((1 << MIN(x * 3, 19)) - 1);
+					scores[h] += k * ((1 << MIN(x * 2, 19)) - 1);
 				}
  			}
 			if (k < max && k > min) {
@@ -1564,11 +1556,44 @@ static void init_multi_rot(struct hashcontext *ctx,
 }
 
 
+static void print_c_code(struct hashcontext *ctx,
+			 struct multi_rot *c)
+{
+	int i;
+	printf("/*** *** *** *** ***/\n");
+	printf("uint hash(const char *string)\n");
+	printf("{\n");
+	printf("\tconst char *s;\n");
+	printf("\tuint32_t h = 2166136261;\n");
+	printf("\tuint r = 0;\n");
+	printf("\tfor (s = string; s != '\\0'; s++) {\n");
+	printf("\t\tuint8_t h = (uint8_t)*s;\n");
+	if (ctx->case_insensitive) {
+		printf("\t\tc &= 0x5f;\n");
+	}
+	printf("\t\th ^= c;\n");
+	printf("\t\th *= %u;\n", FNV);
+	printf("\t}\n");
+	for (i = 0; i < N_PARAMS; i++) {
+		uint64_t x = c->params[i];
+		uint64_t mul = MR_MUL(x);
+		uint64_t rot = MR_ROT(x);		
+		uint mask = MR_MASK(i);
+		printf("\tr |= ((h * %#17lx) >> %2lu) & %#6x;\n",
+		       mul, rot, mask);
+	}
+	printf("\treturn r;\n");
+	printf("}\n");
+}
+
+
 static struct hashcontext *new_context(const char *filename, uint bits,
-				       struct rng *rng, const char *db_name)
+				       struct rng *rng, const char *db_name,
+				       bool case_insensitive)
 {
 	struct strings strings = load_strings(filename);
-	struct hashdata *data = new_hashdata(&strings);
+	struct hashdata *data = new_hashdata(&strings,
+					     case_insensitive);
 	free(strings.strings); /* the (char**), not the (char*) */
 	struct hashcontext *ctx = malloc(sizeof(*ctx));
 
@@ -1582,6 +1607,7 @@ static struct hashcontext *new_context(const char *filename, uint bits,
 	ctx->rng = rng;
 	ctx->string_mem = strings.mem;
 	ctx->db_name = db_name;
+	ctx->case_insensitive = case_insensitive;
 	read_db(ctx, db_name);
 
 	return ctx;
@@ -1600,11 +1626,13 @@ static int find_hash(const char *filename, uint bits,
 		     uint n_candidates, struct rng *rng,
 		     const char *db_filename,
 		     const char *import_text,
-		     uint64_t post_squash_retry)
+		     uint64_t post_squash_retry,
+		     bool c_code,
+		     bool case_insensitive)
 {
-
 	struct hashcontext *ctx = new_context(filename, bits, rng,
-					       db_filename);
+					      db_filename,
+					      case_insensitive);
 
 	if (! check_raw_hash(ctx)) {
 		printf("This will never work because the raw hash collides\n");
@@ -1627,9 +1655,12 @@ static int find_hash(const char *filename, uint bits,
 	}
 
 	struct hashcontext *ctx2 = new_context(filename, bits, rng,
-					       NULL);
+					       NULL, case_insensitive);
 
 	describe_hash(ctx2, &c, NULL, N_PARAMS, true);
+	if (c_code) {
+		print_c_code(ctx, &c);
+	}
 	free(c.params);
 	free_context(ctx);
 	free_context(ctx2);
@@ -1644,6 +1675,8 @@ int main(int argc, const char *argv[])
 	uint64_t effort = 1000000;
 	uint64_t rng_seed = -1ULL;
 	uint64_t post_squash_retry = 0ULL;
+	int case_insensitive = 0;
+	int c_code = 0;
 	char *db = NULL;
 	char *import_text = NULL;
 	const char *strings = NULL;
@@ -1664,6 +1697,10 @@ int main(int argc, const char *argv[])
 			   "import parameters implied here"),
 		OPT_UINT64('R', "retry-rounds", &post_squash_retry,
 			   "post-squash retry this many times"),
+		OPT_BOOLEAN('C', "c-code", &c_code,
+			    "print C code implementing the hash"),
+		OPT_BOOLEAN('i', "case-insensitive", &case_insensitive,
+			    "ignore case in hashing (ascii only)"),
 		OPT_END(),
 	};
 	static const char *const usages[] = {
@@ -1694,5 +1731,5 @@ int main(int argc, const char *argv[])
 		rng_init(&rng, rng_seed);
 	}
 	return find_hash(strings, bits, effort, &rng, db, import_text,
-			 post_squash_retry);
+			 post_squash_retry, c_code, case_insensitive);
 }
