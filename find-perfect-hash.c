@@ -526,6 +526,7 @@ enum next_param_tricks {
 	TRICK_BEST_PARAM_BIT_FLIP,
 	TRICK_BEST_PARAM_ROTATE,
 	TRICK_BEST_PARAM_SHIFT,
+	TRICK_BEST_TRIPLE_BIT_FLIP,
 };
 
 #define t_random(x) x
@@ -541,6 +542,7 @@ const char * const trick_names[] = {
 	[TRICK_BEST_PARAM_BIT_FLIP] = t_fancy("best param bit flip"),
 	[TRICK_BEST_PARAM_ROTATE] = t_fancy("best param rotate"),
 	[TRICK_BEST_PARAM_SHIFT] = t_fancy("best param shift"),
+	[TRICK_BEST_TRIPLE_BIT_FLIP] = t_fancy("best triple flip"),
 };
 #undef t_random
 #undef t_db
@@ -616,6 +618,17 @@ static inline uint64_t next_param(struct hashcontext *ctx,
 		}
 		rot &= 63;
 		return MUL_ROT_TO_PARAM(mul, rot);
+	}
+	if (i < threshold * 3 + 30) {
+		uint64_t a;
+		*used_trick = TRICK_BEST_PARAM_BIT_FLIP;
+		p = rand64(rng);
+		a = 1ULL << (p & 63ULL);
+		p >>= 6;
+		a |= 1ULL << (p & 63ULL);
+		p >>= 6;
+		a |= 1ULL << (p & 63ULL);
+		return c ^ a;
 	}
 
 	*used_trick = TRICK_NONE;
