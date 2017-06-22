@@ -1592,7 +1592,7 @@ static void print_c_code(struct hashcontext *ctx,
 		uint64_t mul = MR_MUL(x);
 		uint64_t rot = MR_ROT(x);		
 		uint mask = MR_MASK(i);
-		printf("\tr |= ((h * %#17lx) >> %2lu) & %#6x;\n",
+		printf("\tr |= ((h * %#17lxULL) >> %2lu) & %#6xULL;\n",
 		       mul, rot, mask);
 	}
 	printf("\treturn r;\n");
