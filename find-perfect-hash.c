@@ -528,6 +528,7 @@ enum next_param_tricks {
 	TRICK_BEST_PARAM_ROTATE,
 	TRICK_BEST_PARAM_SHIFT,
 	TRICK_BEST_TRIPLE_BIT_FLIP,
+	TRICK_CLOSE_TRIPLE_BIT_FLIP,
 };
 
 #define t_random(x) x
@@ -545,6 +546,7 @@ const char * const trick_names[] = {
 	[TRICK_BEST_PARAM_ROTATE] = t_fancy("best param rotate"),
 	[TRICK_BEST_PARAM_SHIFT] = t_fancy("best param shift"),
 	[TRICK_BEST_TRIPLE_BIT_FLIP] = t_fancy("best triple flip"),
+	[TRICK_CLOSE_TRIPLE_BIT_FLIP] = t_fancy("close triple flip"),
 };
 #undef t_random
 #undef t_db
@@ -558,15 +560,18 @@ static inline uint64_t next_param(struct hashcontext *ctx,
 	/* these ones work perfect for the first 2 params in
 	   ldap_display_names */
 	uint64_t p, rot;
+	const uint64_t best_param_chance = best ? 30 : 0;
+	const uint64_t close_param_chance = close ? 70 : 0;
+
 	struct rng *rng = ctx->rng;
 	if (round < ctx->n_good_params) {
 		*used_trick = TRICK_GOOD_PARAM;
 		return ctx->good_params[round];
 	}
 	uint64_t c = best;
-	uint threshold = ctx->n_good_params + (best ? 30 : 0);
+	uint threshold = ctx->n_good_params + best_param_chance;
 	uint i = rand64(rng) & ((1 << 17) - 1);
-	if (i < threshold + close ? 30 : 0) {
+	if (i < threshold + close_param_chance) {
 		uint64_t a, b;
 		if (i < ctx->n_good_params) {
 			c = ctx->good_params[i];
@@ -592,7 +597,7 @@ static inline uint64_t next_param(struct hashcontext *ctx,
 		c ^= b;
 		return c;
 	}
-	i -= threshold + close ? 30 : 0;
+	i -= threshold + close_param_chance;
 	if (i < threshold) {
 		if (i < ctx->n_good_params) {
 			c = ctx->good_params[i];
@@ -626,9 +631,21 @@ static inline uint64_t next_param(struct hashcontext *ctx,
 		return MUL_ROT_TO_PARAM(mul, rot);
 	}
 	i -= threshold;
-	if (i < 30) {
+	if (i < best_param_chance) {
 		uint64_t a;
-		*used_trick = TRICK_BEST_PARAM_BIT_FLIP;
+		*used_trick = TRICK_BEST_TRIPLE_BIT_FLIP;
+		p = rand64(rng);
+		a = 1ULL << (p & 63ULL);
+		p >>= 6;
+		a |= 1ULL << (p & 63ULL);
+		p >>= 6;
+		a |= 1ULL << (p & 63ULL);
+		return c ^ a;
+	}
+	i -= best_param_chance;
+	if (i < close_param_chance) {
+		uint64_t a;
+		*used_trick = TRICK_CLOSE_TRIPLE_BIT_FLIP;
 		p = rand64(rng);
 		a = 1ULL << (p & 63ULL);
 		p >>= 6;
