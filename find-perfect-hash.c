@@ -524,6 +524,7 @@ enum next_param_tricks {
 	TRICK_GOOD_PARAM_ROTATE,
 	TRICK_GOOD_PARAM_SHIFT,
 	TRICK_BEST_PARAM_BIT_FLIP,
+	TRICK_CLOSE_PARAM_BIT_FLIP,
 	TRICK_BEST_PARAM_ROTATE,
 	TRICK_BEST_PARAM_SHIFT,
 	TRICK_BEST_TRIPLE_BIT_FLIP,
@@ -540,6 +541,7 @@ const char * const trick_names[] = {
 	[TRICK_GOOD_PARAM_ROTATE] = t_fancy("good param rotate"),
 	[TRICK_GOOD_PARAM_SHIFT] = t_fancy("good param shift"),
 	[TRICK_BEST_PARAM_BIT_FLIP] = t_fancy("best param bit flip"),
+	[TRICK_CLOSE_PARAM_BIT_FLIP] = t_fancy("close param bit flip"),
 	[TRICK_BEST_PARAM_ROTATE] = t_fancy("best param rotate"),
 	[TRICK_BEST_PARAM_SHIFT] = t_fancy("best param shift"),
 	[TRICK_BEST_TRIPLE_BIT_FLIP] = t_fancy("best triple flip"),
@@ -550,7 +552,8 @@ const char * const trick_names[] = {
 
 static inline uint64_t next_param(struct hashcontext *ctx,
 				  uint64_t round, uint n_params,
-				  uint64_t best, uint *used_trick)
+				  uint64_t best, uint64_t close,
+				  uint *used_trick)
 {
 	/* these ones work perfect for the first 2 params in
 	   ldap_display_names */
@@ -563,13 +566,16 @@ static inline uint64_t next_param(struct hashcontext *ctx,
 	uint64_t c = best;
 	uint threshold = ctx->n_good_params + (best ? 30 : 0);
 	uint i = rand64(rng) & ((1 << 17) - 1);
-	if (i < threshold) {
+	if (i < threshold + close ? 30 : 0) {
 		uint64_t a, b;
 		if (i < ctx->n_good_params) {
 			c = ctx->good_params[i];
 			*used_trick = TRICK_GOOD_PARAM_BIT_FLIP;
-		} else {
+		} else if (i < threshold) {
 			*used_trick = TRICK_BEST_PARAM_BIT_FLIP;
+		} else {
+			c = close;
+			*used_trick = TRICK_CLOSE_PARAM_BIT_FLIP;
 		}
 		p = rand64(rng);
 		/* a is always a multiplier
@@ -586,8 +592,8 @@ static inline uint64_t next_param(struct hashcontext *ctx,
 		c ^= b;
 		return c;
 	}
-	if (i < threshold * 2) {
-		i -= threshold;
+	i -= threshold + close ? 30 : 0;
+	if (i < threshold) {
 		if (i < ctx->n_good_params) {
 			c = ctx->good_params[i];
 			*used_trick = TRICK_GOOD_PARAM_ROTATE;
@@ -597,8 +603,8 @@ static inline uint64_t next_param(struct hashcontext *ctx,
 		p = rand64(rng) & 63;
 		return ROTATE(c, p);
 	}
-	if (i < threshold * 3) {
-		i -= threshold * 2;
+	i -= threshold;
+	if (i < threshold) {
 		if (i < ctx->n_good_params) {
 			c = ctx->good_params[i];
 			*used_trick = TRICK_GOOD_PARAM_SHIFT;
@@ -619,7 +625,8 @@ static inline uint64_t next_param(struct hashcontext *ctx,
 		rot &= 63;
 		return MUL_ROT_TO_PARAM(mul, rot);
 	}
-	if (i < threshold * 3 + 30) {
+	i -= threshold;
+	if (i < 30) {
 		uint64_t a;
 		*used_trick = TRICK_BEST_PARAM_BIT_FLIP;
 		p = rand64(rng);
@@ -925,6 +932,7 @@ static uint do_squashing_round(struct hashcontext *ctx,
 	uint h, i, k;
 	uint64_t j;
 	uint64_t best_param = 0;
+	uint64_t close_param = 0;
 	uint64_t *params = c->params;
 	struct hash_tuples tuples;
 	uint n_bits = n + BASE_N - 1;
@@ -953,7 +961,8 @@ static uint do_squashing_round(struct hashcontext *ctx,
 	uint param_trick = 0;
 	for (j = 0; j < attempts; j++) {
 		/* we don't need to calculate the full hash */
-		uint64_t param = next_param(ctx, j, n + 1, best_param, &param_trick);
+		uint64_t param = next_param(ctx, j, n + 1, best_param, close_param,
+					    &param_trick);
 		param &= ~MR_ROT_MASK;
 		struct tuple_list t;
 		uint8_t ones[64];
@@ -1015,6 +1024,7 @@ static uint do_squashing_round(struct hashcontext *ctx,
 			}
 			rotate = MIN(rotate - 1, 63);
 		}
+		close_param = param;
 	}
   win:
 	printf("past half_way %'lu times\n", past_half_way);
@@ -1076,7 +1086,7 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 	uint param_trick = 0;
 	for (j = 0; j < attempts; j++) {
 		/* we don't need to calculate the full hash */
-		uint64_t param = next_param(ctx, j, n + 1, best_param,
+		uint64_t param = next_param(ctx, j, n + 1, best_param, 0,
 					    &param_trick);
 		uint64_t non_collisions = ~0ULL;
 		uint64_t mul = MR_MUL(param);
@@ -1238,7 +1248,7 @@ static uint do_last_round(struct hashcontext *ctx,
 		 */
 		for (j = 0; j < exact_attempts; j++) {
 			/* we don't need to calculate the full hash */
-			uint64_t p = next_param(ctx, j, n_params, best_param,
+			uint64_t p = next_param(ctx, j, n_params, best_param, 0,
 						&param_trick);
 			uint64_t non_collisions = (uint64_t)-1ULL;
 			for (i = 0; i < pairs.n; i++) {
@@ -1294,7 +1304,7 @@ static uint do_last_round(struct hashcontext *ctx,
 
 	for (j = 0; j < attempts; j++) {
 		/* we don't need to calculate the full hash */
-		uint64_t p = next_param(ctx, j, n_params, best_param,
+		uint64_t p = next_param(ctx, j, n_params, best_param, 0,
 					&param_trick);
 		collisions = test_all_pairs_all_rot(&p, pairs, n_params,
 						    best_collisions, 0);
@@ -1344,7 +1354,7 @@ static uint do_l2_round(struct hashcontext *ctx,
 	printf("making %'lu attempts\n", attempts);
 
 	for (j = 0; j < attempts; j++) {
-		params[n] = next_param(ctx, j, n, best_param, &param_trick);
+		params[n] = next_param(ctx, j, n, best_param, 0, &param_trick);
 		collisions2 = test_params_with_l2_running(
 			ctx,
 			params,
@@ -1590,7 +1600,7 @@ static void print_c_code(struct hashcontext *ctx,
 	for (i = 0; i < N_PARAMS; i++) {
 		uint64_t x = c->params[i];
 		uint64_t mul = MR_MUL(x);
-		uint64_t rot = MR_ROT(x);		
+		uint64_t rot = MR_ROT(x);
 		uint mask = MR_MASK(i);
 		printf("\tr |= ((h * %#17lxULL) >> %2lu) & %#6xULL;\n",
 		       mul, rot, mask);
