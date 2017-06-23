@@ -1,4 +1,4 @@
-//gcc -Wall -O3 find-perfect-hash.c -o find-perfect-hash -ggdb -ffast-math -lm -march=native
+/* Copyright (C) 2017 Douglas Bagnall <douglas@halo.gen.nz> GPL2+ */
 
 #include "find-perfect-hash-helpers.h"
 #include "find-perfect-hash.h"
