@@ -1705,7 +1705,7 @@ static void print_c_code(struct hashcontext *ctx,
 	printf("\tuint32_t h = 2166136261;\n");
 	printf("\tuint r = 0;\n");
 	printf("\tfor (s = string; s != '\\0'; s++) {\n");
-	printf("\t\tuint8_t h = (uint8_t)*s;\n");
+	printf("\t\tuint8_t c = (uint8_t)*s;\n");
 	if (ctx->case_insensitive) {
 		printf("\t\tc &= 0x5f;\n");
 	}
@@ -1717,8 +1717,18 @@ static void print_c_code(struct hashcontext *ctx,
 		uint64_t mul = MR_MUL(x);
 		uint64_t rot = MR_ROT(x);
 		uint mask = MR_MASK(i);
-		printf("\tr |= ((h * %#17lxULL) >> %2lu) & %#6xULL;\n",
-		       mul, rot, mask);
+		/* XXX untested */
+		if (rot + i < 64) {
+			printf("\tr |= ((h * %#17lxULL) >> %2lu) & %#6x;\n",
+			       mul, rot, mask);
+		} else if (rot + i == 64) {
+			printf("\tr |=  (h * %#17lxULL)          & %#6x;\n",
+			       mul, mask);
+		} else {
+			/* we need to shift backwards */
+			printf("\tr |= ((h * %#17lxULL) << %2lu) & %#6x;\n",
+			       mul, rot + i - 64, mask);
+		}
 	}
 	printf("\treturn r;\n");
 	printf("}\n");
