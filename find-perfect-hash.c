@@ -1461,7 +1461,7 @@ static void retry(struct hashcontext *ctx,
 	uint target = test_params_l2(ctx, c->params, n_params);
 	uint worsts[n_params];
 	memset(worsts, 0, sizeof(worsts));
-
+	uint prev_j = n_params;
 	for (i = 0; i < rounds; i++) {
 		printf(COLOUR(C_GREEN,
 			      "-------- round %u ---------------------\n"),
@@ -1469,6 +1469,11 @@ static void retry(struct hashcontext *ctx,
 		uint mean_score;
 		uint j = find_worst_param(ctx, c, n_params, &mean_score);
 		worsts[j]++;
+		if (j == prev_j) {
+			j = 1 + rand64(ctx->rng) % (n_params - 1);
+		}
+		printf("retrying param %u\n", j);
+		prev_j = j;
 		reorder_params(c, j, n_params - 1);
 		uint64_t victim = params[n_params - 1];
 
