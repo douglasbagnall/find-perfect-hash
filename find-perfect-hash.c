@@ -1422,7 +1422,8 @@ static uint do_l2_round(struct hashcontext *ctx,
 								 n + 1,
 								 UINT_MAX);
 				if (collisions == 0) {
-					printf("we seem to be finished in round %d!\n", n);
+					printf("we seem to be finished in "
+					       "round %d!\n", n);
 					goto done;
 				}
 				break;
