@@ -1570,7 +1570,9 @@ static void retry(struct hashcontext *ctx,
 static void init_multi_rot(struct hashcontext *ctx,
 			   struct multi_rot *c,
 			   uint64_t n_candidates,
-			   uint64_t post_squash_retry)
+			   uint64_t post_squash_retry,
+			   uint64_t penultimate_retry,
+			   uint quick_early_params)
 {
 	uint i;
 	uint best;
@@ -1580,7 +1582,12 @@ static void init_multi_rot(struct hashcontext *ctx,
 	uint64_t *params = c->params;
 	update_running_hash(ctx, params, 0);
 
-	best = do_l2_round(ctx, c, n_candidates * 20UL, 0);
+	attempts = n_candidates * 20UL;
+	if (quick_early_params) {
+		attempts = 1000;
+	}
+
+	best = do_l2_round(ctx, c, attempts, 0);
 	if (best == 0) {
 		printf("success in first round!\n");
 		c->collisions = best;
@@ -1589,6 +1596,9 @@ static void init_multi_rot(struct hashcontext *ctx,
 	if (N_PARAMS > 2) {
 		for (i = 1; i < N_PARAMS - 2; i++) {
 			attempts = n_candidates * original_n_strings / ctx->n;
+			if (i < quick_early_params) {
+				attempts = 1000;
+			}
 			worst = find_non_colliding_strings(ctx, params, i,
 							   false);
 
@@ -1623,6 +1633,11 @@ static void init_multi_rot(struct hashcontext *ctx,
 		/* special cases for the last two rounds */
 		do_penultimate_round(ctx, c, n_candidates * 2,
 				     N_PARAMS - 2, UINT_MAX);
+
+		if (penultimate_retry) {
+			retry(ctx, c, n_candidates, N_PARAMS - 1,
+			      penultimate_retry, 20, true);
+		}
 	}
 	if (N_PARAMS > 1) {
 		c->collisions = do_last_round(ctx, c, n_candidates, N_PARAMS);
@@ -1703,8 +1718,10 @@ static int find_hash(const char *filename, uint bits,
 		     const char *db_filename,
 		     const char *import_text,
 		     uint64_t post_squash_retry,
+		     uint64_t penultimate_retry,
 		     bool c_code,
-		     bool case_insensitive)
+		     bool case_insensitive,
+		     uint quick_early_params)
 {
 	struct hashcontext *ctx = new_context(filename, bits, rng,
 					      db_filename,
@@ -1721,7 +1738,8 @@ static int find_hash(const char *filename, uint bits,
 	struct multi_rot c;
 	c.params = calloc(N_PARAMS, sizeof(uint64_t));
 	c.collisions = UINT_MAX;
-	init_multi_rot(ctx, &c, n_candidates, post_squash_retry);
+	init_multi_rot(ctx, &c, n_candidates, post_squash_retry,
+		       penultimate_retry, quick_early_params);
 
 	if (c.collisions != 0 && false) {
 		printf("Final hash from initial search\n");
@@ -1751,7 +1769,9 @@ int main(int argc, const char *argv[])
 	uint64_t effort = 1000000;
 	uint64_t rng_seed = -1ULL;
 	uint64_t post_squash_retry = 0ULL;
+	uint64_t penultimate_retry = 0ULL;
 	int case_insensitive = 0;
+	int quick_early_params = 0;
 	int c_code = 0;
 	char *db = NULL;
 	char *import_text = NULL;
@@ -1771,12 +1791,16 @@ int main(int argc, const char *argv[])
 			   "load/save good params here"),
 		OPT_STRING(0, "import-parameters", &import_text,
 			   "import parameters implied here"),
-		OPT_UINT64('R', "retry-rounds", &post_squash_retry,
+		OPT_UINT64('R', "post-squash-retries", &post_squash_retry,
 			   "post-squash retry this many times"),
+		OPT_UINT64(0, "penultimate-retries", &penultimate_retry,
+			   "penultimate retry this many times"),
 		OPT_BOOLEAN('C', "c-code", &c_code,
 			    "print C code implementing the hash"),
 		OPT_BOOLEAN('i', "case-insensitive", &case_insensitive,
 			    "ignore case in hashing (ascii only)"),
+		OPT_INTEGER('Q', "quick-early-params", &quick_early_params,
+			    "skip quickly over this many params"),
 		OPT_END(),
 	};
 	static const char *const usages[] = {
@@ -1807,5 +1831,6 @@ int main(int argc, const char *argv[])
 		rng_init(&rng, rng_seed);
 	}
 	return find_hash(strings, bits, effort, &rng, db, import_text,
-			 post_squash_retry, c_code, case_insensitive);
+			 post_squash_retry, penultimate_retry, c_code,
+			 case_insensitive, quick_early_params);
 }
