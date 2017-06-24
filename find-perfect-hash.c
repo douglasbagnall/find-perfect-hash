@@ -262,6 +262,53 @@ static bool reorder_params(struct multi_rot *c, uint a, uint b)
 	return true;
 }
 
+static uint64_t remove_unused_param_bits(struct hashcontext *ctx,
+					 uint64_t param, uint n)
+{
+	uint64_t mul = MR_MUL(param);
+	uint64_t rot = MR_ROT(param);
+	uint i, j;
+	uint64_t original = param;
+	uint32_t mask = MR_MASK(n);
+	for (i = 59; i > 1; i--) {
+		uint64_t mul2 = mul & ((1ULL << i) - 1ULL);
+		for (j = 0; j < ctx->n; j++) {
+			uint64_t x = ctx->data[j].raw_hash;
+			if (MR_COMPONENT(x, mul, rot, mask) !=
+			    MR_COMPONENT(x, mul2, rot, mask)) {
+				goto low_bits;
+			}
+		}
+		param = MUL_ROT_TO_PARAM(mul2, rot);
+	}
+  low_bits:
+	for (i = 0; i < 50; i++) {
+		uint64_t mul2 = mul & ((1ULL << i) - 1ULL);
+		for (j = 0; j < ctx->n; j++) {
+			uint64_t x = ctx->data[j].raw_hash;
+			if (MR_COMPONENT(x, mul, rot, mask) !=
+			    MR_COMPONENT(x, mul2, rot, mask)) {
+				goto exit;
+			}
+		}
+		printf("param %u can drop low bit %u\n", n, i);
+		param = MUL_ROT_TO_PARAM(mul2, rot);
+	}
+  exit:
+	printf("param %u: %lx -> %lx\n", n, original, param);
+	return param;
+}
+
+static void remove_unused_bits(struct hashcontext *ctx,
+			       struct multi_rot *c)
+{
+	uint i;
+	for (i = 0; i < N_PARAMS; i++) {
+		c->params[i] = remove_unused_param_bits(ctx,
+							c->params[i], i);
+	}
+}
+
 static uint test_params(struct hashcontext *ctx,
 			uint64_t *params, uint n)
 {
@@ -1752,6 +1799,11 @@ static int find_hash(const char *filename, uint bits,
 					       NULL, case_insensitive);
 
 	describe_hash(ctx2, &c, NULL, N_PARAMS, true);
+	if (true) {
+		remove_unused_bits(ctx2, &c);
+		describe_hash(ctx2, &c, NULL, N_PARAMS, true);
+	}
+
 	if (c_code) {
 		print_c_code(ctx, &c);
 	}
