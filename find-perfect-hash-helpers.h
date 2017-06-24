@@ -25,6 +25,10 @@
 #define C_GREY  "\033[00;37m"
 #define C_WHITE  "\033[01;37m"
 
+#define C_LT_GREEN  "\033[38;5;113m"
+#define C_LILAC  "\033[38;5;141m"
+
+
 #define unlikely(x) __builtin_expect(!!(x), 0)
 
 #define COLOUR(c, s) c s C_NORMAL

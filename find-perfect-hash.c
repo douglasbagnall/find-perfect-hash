@@ -520,37 +520,59 @@ static uint64_t calc_best_error(struct hashcontext *ctx, uint n_params)
 enum next_param_tricks {
 	TRICK_NONE = 0,
 	TRICK_GOOD_PARAM,
+
 	TRICK_GOOD_PARAM_BIT_FLIP,
-	TRICK_GOOD_PARAM_ROTATE,
-	TRICK_GOOD_PARAM_SHIFT,
 	TRICK_BEST_PARAM_BIT_FLIP,
 	TRICK_CLOSE_PARAM_BIT_FLIP,
+
+	TRICK_GOOD_PARAM_ROTATE,
 	TRICK_BEST_PARAM_ROTATE,
+	TRICK_CLOSE_PARAM_ROTATE,
+
+	TRICK_GOOD_PARAM_SHIFT,
 	TRICK_BEST_PARAM_SHIFT,
+	TRICK_CLOSE_PARAM_SHIFT,
+
 	TRICK_BEST_TRIPLE_BIT_FLIP,
 	TRICK_CLOSE_TRIPLE_BIT_FLIP,
+
+	TRICK_BEST_QUAD_BIT_FLIP,
+	TRICK_CLOSE_QUAD_BIT_FLIP,
 };
 
 #define t_random(x) x
 #define t_db(x) C_CYAN x C_NORMAL
-#define t_fancy(x) C_YELLOW x C_NORMAL
+#define t_db_mut(x) C_LILAC x C_NORMAL
+#define t_best(x) C_YELLOW x C_NORMAL
+#define t_close(x) C_LT_GREEN x C_NORMAL
 
 const char * const trick_names[] = {
 	[TRICK_NONE] = t_random("random"),
 	[TRICK_GOOD_PARAM] = t_db("good param"),
-	[TRICK_GOOD_PARAM_BIT_FLIP] = t_fancy("good param bit flip"),
-	[TRICK_GOOD_PARAM_ROTATE] = t_fancy("good param rotate"),
-	[TRICK_GOOD_PARAM_SHIFT] = t_fancy("good param shift"),
-	[TRICK_BEST_PARAM_BIT_FLIP] = t_fancy("best param bit flip"),
-	[TRICK_CLOSE_PARAM_BIT_FLIP] = t_fancy("close param bit flip"),
-	[TRICK_BEST_PARAM_ROTATE] = t_fancy("best param rotate"),
-	[TRICK_BEST_PARAM_SHIFT] = t_fancy("best param shift"),
-	[TRICK_BEST_TRIPLE_BIT_FLIP] = t_fancy("best triple flip"),
-	[TRICK_CLOSE_TRIPLE_BIT_FLIP] = t_fancy("close triple flip"),
+
+	[TRICK_GOOD_PARAM_BIT_FLIP] = t_db_mut("good param bit flip"),
+	[TRICK_BEST_PARAM_BIT_FLIP] = t_best("best param bit flip"),
+	[TRICK_CLOSE_PARAM_BIT_FLIP] = t_close("close param bit flip"),
+
+	[TRICK_GOOD_PARAM_ROTATE] = t_db_mut("good param rotate"),
+	[TRICK_BEST_PARAM_ROTATE] = t_best("best param rotate"),
+	[TRICK_CLOSE_PARAM_ROTATE] = t_best("close param rotate"),
+
+	[TRICK_GOOD_PARAM_SHIFT] = t_best("good param shift"),
+	[TRICK_BEST_PARAM_SHIFT] = t_best("best param shift"),
+	[TRICK_CLOSE_PARAM_SHIFT] = t_db_mut("close param shift"),
+
+	[TRICK_BEST_TRIPLE_BIT_FLIP] = t_best("best triple flip"),
+	[TRICK_CLOSE_TRIPLE_BIT_FLIP] = t_close("close triple flip"),
+
+	[TRICK_BEST_QUAD_BIT_FLIP] = t_best("best quad flip"),
+	[TRICK_CLOSE_QUAD_BIT_FLIP] = t_close("close quad flip"),
 };
 #undef t_random
 #undef t_db
-#undef t_fancy
+#undef t_db_mut
+#undef t_best
+#undef t_close
 
 static inline uint64_t next_param(struct hashcontext *ctx,
 				  uint64_t round, uint n_params,
@@ -560,7 +582,7 @@ static inline uint64_t next_param(struct hashcontext *ctx,
 	/* these ones work perfect for the first 2 params in
 	   ldap_display_names */
 	uint64_t p, rot;
-	const uint64_t best_param_chance = best ? 30 : 0;
+	const uint64_t best_param_chance = best ? 50 : 0;
 	const uint64_t close_param_chance = close ? 70 : 0;
 
 	struct rng *rng = ctx->rng;
@@ -569,41 +591,38 @@ static inline uint64_t next_param(struct hashcontext *ctx,
 		return ctx->good_params[round];
 	}
 	uint64_t c = best;
-	uint threshold = ctx->n_good_params + best_param_chance;
+	uint threshold = ctx->n_good_params + best_param_chance + close_param_chance;
 	uint i = rand64(rng) & ((1 << 17) - 1);
-	if (i < threshold + close_param_chance) {
-		uint64_t a, b;
+	if (i < threshold) {
+		uint64_t a;
 		if (i < ctx->n_good_params) {
 			c = ctx->good_params[i];
 			*used_trick = TRICK_GOOD_PARAM_BIT_FLIP;
-		} else if (i < threshold) {
+		} else if (i < ctx->n_good_params + best_param_chance) {
 			*used_trick = TRICK_BEST_PARAM_BIT_FLIP;
 		} else {
 			c = close;
 			*used_trick = TRICK_CLOSE_PARAM_BIT_FLIP;
 		}
 		p = rand64(rng);
-		/* a is always a multiplier
-		   b is never a, but can be a rotate */
+		/* Always change at least one multiplier. */
 		do {
 			a = 1ULL << (p & 63ULL);
 			p >>= 6;
 		} while (p != 0 && MR_MUL(a) == 0);
-		do {
-			b = 1ULL << (p & 63ULL);
-			p >>= 6;
-		} while (p != 0 && b != a);
-		c ^= a;
-		c ^= b;
-		return c;
+		a |= 1ULL << (p & 63ULL);
+		return c ^ a;
 	}
-	i -= threshold + close_param_chance;
+	i -= threshold;
 	if (i < threshold) {
 		if (i < ctx->n_good_params) {
 			c = ctx->good_params[i];
 			*used_trick = TRICK_GOOD_PARAM_ROTATE;
-		} else {
+		} else if (i < ctx->n_good_params + best_param_chance) {
 			*used_trick = TRICK_BEST_PARAM_ROTATE;
+		} else {
+			c = close;
+			*used_trick = TRICK_CLOSE_PARAM_ROTATE;
 		}
 		p = rand64(rng) & 63;
 		return ROTATE(c, p);
@@ -613,8 +632,11 @@ static inline uint64_t next_param(struct hashcontext *ctx,
 		if (i < ctx->n_good_params) {
 			c = ctx->good_params[i];
 			*used_trick = TRICK_GOOD_PARAM_SHIFT;
-		} else {
+		} else if (i < ctx->n_good_params + best_param_chance) {
 			*used_trick = TRICK_BEST_PARAM_SHIFT;
+		} else {
+			c = close;
+			*used_trick = TRICK_CLOSE_PARAM_SHIFT;
 		}
 		uint64_t mul = MR_MUL(c);
 		uint64_t rot = MR_ROT(c);
@@ -631,27 +653,34 @@ static inline uint64_t next_param(struct hashcontext *ctx,
 		return MUL_ROT_TO_PARAM(mul, rot);
 	}
 	i -= threshold;
-	if (i < best_param_chance) {
+	if (i < best_param_chance * 2 + close_param_chance * 2) {
 		uint64_t a;
-		*used_trick = TRICK_BEST_TRIPLE_BIT_FLIP;
 		p = rand64(rng);
 		a = 1ULL << (p & 63ULL);
 		p >>= 6;
 		a |= 1ULL << (p & 63ULL);
 		p >>= 6;
 		a |= 1ULL << (p & 63ULL);
-		return c ^ a;
-	}
-	i -= best_param_chance;
-	if (i < close_param_chance) {
-		uint64_t a;
-		*used_trick = TRICK_CLOSE_TRIPLE_BIT_FLIP;
-		p = rand64(rng);
-		a = 1ULL << (p & 63ULL);
-		p >>= 6;
-		a |= 1ULL << (p & 63ULL);
-		p >>= 6;
-		a |= 1ULL << (p & 63ULL);
+		bool quad = p & 1;
+		if (quad) {
+			p >>= 7;
+			a |= 1ULL << (p & 63ULL);
+		}
+		if (i < best_param_chance * 2) {
+			if (quad) {
+				*used_trick = TRICK_BEST_QUAD_BIT_FLIP;
+			} else {
+				*used_trick = TRICK_BEST_TRIPLE_BIT_FLIP;
+			}
+		} else {
+			c = best;
+			if (quad) {
+				*used_trick = TRICK_CLOSE_QUAD_BIT_FLIP;
+
+			} else {
+				*used_trick = TRICK_CLOSE_TRIPLE_BIT_FLIP;
+			}
+		}
 		return c ^ a;
 	}
 
