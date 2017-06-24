@@ -1115,7 +1115,8 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 	double past_triples_chance = PAST_TRIPLES_CHANCE(tuples.tuples[3].n,
 							 tuples.tuples[4].n);
 
-	attempts *= (uint64_t) sqrt(1.0 / (3e-4 + past_triples_chance));
+	attempts *= MAX(1,
+			(uint64_t)sqrt((1.00 / (3e-4 + past_triples_chance))));
 	printf("making %'lu attempts\n", attempts);
 	printf("past_triples_chance is %.3e\n",
 	       past_triples_chance);
