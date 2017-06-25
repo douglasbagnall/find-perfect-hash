@@ -6,32 +6,60 @@
 #include "argparse/argparse.h"
 
 
-//#define FNV 1099511628211UL
-#define FNV 16777619
+#define FNV64 1099511628211UL
+#define FNV64_SEED 14695981039346656037UL
+#define FNV32 16777619
+#define FNV32_SEED 2166136261u
+#define DJB_SEED 5381
+
+
+enum {
+	HASH_FNV32 = 0,
+	HASH_FNV64,
+	HASH_DJB,
+
+	HASH_LAST
+};
+
+const char * const hash_names[] = {
+	[HASH_FNV32] = "fnv32",
+	[HASH_FNV64] = "fnv64",
+	[HASH_DJB] = "djb"
+};
 
 static void init_hash(struct hashdata *hash, const char *string,
-		      bool case_insensitive)
+		      bool case_insensitive, uint hash_id)
 {
-	uint32_t h = 5381;
-	uint32_t h2 = 2166136261;
+	uint32_t djb = DJB_SEED;
+	uint32_t fnv32 = FNV32_SEED;
+	uint64_t fnv64 = FNV64_SEED;
 	const char *s;
 	for (s = string; *s != '\0'; s++) {
 		uint8_t c = (uint8_t)*s;
 		if (case_insensitive) {
 			c &= 0x5f;
 		}
-		h2 ^= c;
-		h2 *= FNV;
-		h = ((h << 5) + h) ^ c;
+		fnv32 ^= c;
+		fnv32 *= FNV32;
+		fnv64 ^= c;
+		fnv64 *= FNV64;
+		djb = ((djb << 5) + djb) ^ c;
 	}
 	hash->string = string;
 	hash->stringlen = s - string;
 	hash->running_hash = 0;
-	hash->raw_hash = h2;
+	if  (hash_id == HASH_DJB) {
+		hash->raw_hash = djb;
+	} else if (hash_id == HASH_FNV64) {
+		hash->raw_hash = fnv64;
+	} else {
+		hash->raw_hash = fnv32;
+	}
 }
 
 static struct hashdata *new_hashdata(struct strings *strings,
-				     bool case_insensitive)
+				     bool case_insensitive,
+				     uint hash_id)
 {
 	int i;
 	struct hashdata *data = calloc(strings->n_strings,
@@ -39,7 +67,7 @@ static struct hashdata *new_hashdata(struct strings *strings,
 
 	for (i = 0; i < strings->n_strings; i++) {
 		init_hash(&data[i], strings->strings[i],
-			  case_insensitive);
+			  case_insensitive, hash_id);
 	}
 	return data;
 }
@@ -922,7 +950,7 @@ static struct tuple_stats find_unresolved_small_tuples(struct hashcontext *ctx,
 	struct tuple_stats stats = {2, max_size, 0, 0, 0};
 
 	for (j = 0; j < ctx->n; j++) {
-		uint32_t raw = ctx->data[j].raw_hash;
+		uint64_t raw = ctx->data[j].raw_hash;
 		uint32_t hash = unmasked_hash(raw, params, n);
 		hash &= hash_mask;
 		struct hash_big_tuple *p = &tuples[hash];
@@ -1769,7 +1797,13 @@ static void print_c_code(struct hashcontext *ctx,
 	printf("uint hash(const char *string)\n");
 	printf("{\n");
 	printf("\tconst char *s;\n");
-	printf("\tuint32_t h = 2166136261;\n");
+	if (ctx->hash_id == HASH_FNV64) {
+		printf("\tuint64_t h = %luUL;\n", FNV64_SEED);
+	} else if (ctx->hash_id == HASH_DJB) {
+		printf("\tuint32_t h = %u;\n", DJB_SEED);
+	} else {
+		printf("\tuint32_t h = %u;\n", FNV32_SEED);
+	}
 	printf("\tuint r = 0;\n");
 	printf("\tfor (s = string; s != '\\0'; s++) {\n");
 	printf("\t\tuint8_t c = (uint8_t)*s;\n");
@@ -1777,7 +1811,14 @@ static void print_c_code(struct hashcontext *ctx,
 		printf("\t\tc &= 0x5f;\n");
 	}
 	printf("\t\th ^= c;\n");
-	printf("\t\th *= %u;\n", FNV);
+
+	if (ctx->hash_id == HASH_FNV64) {
+		printf("\t\th *= %luUL;\n", FNV64);
+	} else if (ctx->hash_id == HASH_DJB) {
+		printf("\t\th *= 33;\n");
+	} else {
+		printf("\t\th *= %u;\n", FNV32);
+	}
 	printf("\t}\n");
 	for (i = 0; i < ctx->n_params; i++) {
 		uint64_t x = c->params[i];
@@ -1801,11 +1842,13 @@ static void print_c_code(struct hashcontext *ctx,
 
 static struct hashcontext *new_context(const char *filename, uint bits,
 				       struct rng *rng, const char *db_name,
-				       bool case_insensitive)
+				       bool case_insensitive,
+				       uint hash_id)
 {
 	struct strings strings = load_strings(filename);
 	struct hashdata *data = new_hashdata(&strings,
-					     case_insensitive);
+					     case_insensitive,
+					     hash_id);
 	free(strings.strings); /* the (char**), not the (char*) */
 	struct hashcontext *ctx = malloc(sizeof(*ctx));
 
@@ -1817,6 +1860,7 @@ static struct hashcontext *new_context(const char *filename, uint bits,
 	ctx->hits = hits;
 	ctx->bits = bits;
 	ctx->rng = rng;
+	ctx->hash_id = hash_id;
 	ctx->string_mem = strings.mem;
 	ctx->db_name = db_name;
 	ctx->case_insensitive = case_insensitive;
@@ -1844,16 +1888,20 @@ static int find_hash(const char *filename, uint bits,
 		     uint64_t penultimate_retry,
 		     bool c_code,
 		     bool case_insensitive,
-		     uint quick_early_params)
+		     uint quick_early_params,
+		     uint hash_id)
 {
 	struct hashcontext *ctx = new_context(filename, bits, rng,
 					      db_filename,
-					      case_insensitive);
+					      case_insensitive,
+					      hash_id);
 
 	if (! check_raw_hash(ctx)) {
 		printf("This will never work because the raw hash collides\n");
+		printf("(using %s; try something else\n", hash_names[hash_id]);
 		exit(1);
 	}
+	printf("using %s hash -- no collisions\n", hash_names[hash_id]);
 
 	if (import_text) {
 		import_text_parameters(ctx, import_text);
@@ -1872,7 +1920,8 @@ static int find_hash(const char *filename, uint bits,
 	}
 
 	struct hashcontext *ctx2 = new_context(filename, bits, rng,
-					       NULL, case_insensitive);
+					       NULL, case_insensitive,
+					       hash_id);
 
 	describe_hash(ctx2, &c, NULL, ctx->n_params, true);
 	if (true) {
@@ -1892,7 +1941,7 @@ static int find_hash(const char *filename, uint bits,
 
 int main(int argc, const char *argv[])
 {
-	setlocale(LC_NUMERIC, "");
+	uint i;
 	uint64_t bits = 0;
 	uint64_t effort = 1000000;
 	uint64_t rng_seed = -1ULL;
@@ -1903,6 +1952,8 @@ int main(int argc, const char *argv[])
 	int c_code = 0;
 	char *db = NULL;
 	char *import_text = NULL;
+	char *hash_function = "FNV32";
+	uint hash_id = HASH_FNV32;
 	const char *strings = NULL;
 	struct rng rng;
 
@@ -1929,6 +1980,8 @@ int main(int argc, const char *argv[])
 			    "ignore case in hashing (ascii only)"),
 		OPT_INTEGER('Q', "quick-early-params", &quick_early_params,
 			    "skip quickly over this many params"),
+		OPT_STRING('H', "hash-function", &hash_function,
+			   "raw hash to use (one of fnv32, fnv64, djb)"),
 		OPT_END(),
 	};
 	static const char *const usages[] = {
@@ -1953,6 +2006,16 @@ int main(int argc, const char *argv[])
 		return 2;
 	}
 
+
+	for (i = 0; i < HASH_LAST; i++) {
+		if (strcmp(hash_function, hash_names[i]) == 0) {
+			hash_id = i;
+			break;
+		}
+	}
+
+	setlocale(LC_NUMERIC, "");
+
 	if (rng_seed == -1ULL) {
 		rng_random_init(&rng);
 	} else {
@@ -1960,5 +2023,6 @@ int main(int argc, const char *argv[])
 	}
 	return find_hash(strings, bits, effort, &rng, db, import_text,
 			 post_squash_retry, penultimate_retry, c_code,
-			 case_insensitive, quick_early_params);
+			 case_insensitive, quick_early_params,
+			 hash_id);
 }

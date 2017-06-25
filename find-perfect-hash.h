@@ -20,7 +20,7 @@ struct hashcontext {
 	struct hashdata *data;
 	uint n;
 	uint16_t *hits;
-	uint n_params;	
+	uint n_params;
 	uint bits;
 	struct rng *rng;
 	char *string_mem;
@@ -28,6 +28,7 @@ struct hashcontext {
 	uint64_t *good_params;
 	uint n_good_params;
 	bool case_insensitive;
+	uint hash_id;
 	struct close_param *close_params;
 };
 
