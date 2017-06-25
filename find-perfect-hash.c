@@ -576,22 +576,41 @@ static inline void add_close_param(struct hashcontext *ctx,
 {
 	struct close_param *heap = ctx->close_params;
 	uint child;
-	uint pos = 0;
 	if (score >= heap[0].score) {
 		return;
 	}
+	struct close_param undo = heap[0];
+	uint pos = 0;
+
 	for (child = 1;
 	     child < N_CLOSE_PARAMS - 2;
 	     child = 2 * pos + 1) {
-		child += (heap[child].score <
-			  heap[child + 1].score);
-
+		child += (heap[child].score < heap[child + 1].score);
 		if (score >= heap[child].score) {
 			break;
 		}
 		heap[pos] = heap[child];
 		pos = child;
 	}
+
+	if (score == heap[child].score &&
+	    param == heap[child].param) {
+		/* This one is already there (at least once) and we want to
+		   avoid filling it up monotonously. So we unwind what we did,
+		   which is simple because we know we shifted everything to
+		   its parent.
+
+		   (of course there could be other duplicates down other
+		   branches) */
+		do {
+			uint parent = (child - 1) / 2;
+			heap[child] = heap[parent];
+			child = parent;
+		} while (child);
+		heap[0] = undo;
+		return;
+	}
+
 	heap[pos].score = score;
 	heap[pos].param = param;
 }
