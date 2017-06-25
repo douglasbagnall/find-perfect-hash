@@ -796,14 +796,20 @@ static inline uint64_t next_param(struct hashcontext *ctx,
 	}
 	*used_trick = TRICK_NONE;
 	uint64_t n_bits = n_params + BASE_N - 1;
-	/* low rotates are a bit useless, so we try to select them less
-	   often
-	   XXX needs looking at.*/
-	do {
+	/* Some rotates are a bit useless. In particular we want to avoid the
+	   lowest bit landing on the target bit. This of course only matters
+	   with rounds that use rotate.
+
+	   ROTATE shifts left, bringing low bits toward our bit, then suddenly
+	   past.
+	*/
+	for (i = 9; i > 4; i--) {
 		p = rand64(rng);
-		rot = MR_ROT(p) + n_bits;
-		n_bits--;
-	} while (n_bits < 64 && rot < 10);
+		rot = MR_ROT(p);
+		if (n_bits - rot > i) {
+			break;
+		}
+	}
 	return p;
 }
 
