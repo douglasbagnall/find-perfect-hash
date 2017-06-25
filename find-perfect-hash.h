@@ -13,6 +13,7 @@ struct hashcontext {
 	struct hashdata *data;
 	uint n;
 	uint16_t *hits;
+	uint n_params;	
 	uint bits;
 	struct rng *rng;
 	char *string_mem;
@@ -42,9 +43,6 @@ struct hash_tuples {
 	struct tuple_list tuples[MAX_SMALL_TUPLE + 1];
 	uint max_size;
 };
-
-
-uint N_PARAMS = 0;
 
 
 #if 1
