@@ -1071,6 +1071,7 @@ static uint do_squashing_round(struct hashcontext *ctx,
 	       "mean %.1f dev %.1f\n",
 	       attempts, mask, max, min, stats.mean, stats.stddev);
 
+	reset_close_params(ctx);
 	START_TIMER(squashing);
 
 	uint64_t past_half_way = 0;
@@ -1196,6 +1197,7 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 	printf("making %'lu attempts\n", attempts);
 	printf("past_triples_chance is %.3e\n",
 	       past_triples_chance);
+	reset_close_params(ctx);
 
 	/* if there are a lot going through triples, it is better to do the
 	   64-way scan of pairs */
@@ -1352,6 +1354,7 @@ static uint do_last_round(struct hashcontext *ctx,
 	uint64_t best_param = 0;
 	uint64_t *params = c->params;
 	struct hash_tuples tuples;
+	reset_close_params(ctx);
 
 	find_unresolved_small_tuples(ctx, params, n_params - 1,
 				     &tuples, 2, false);
@@ -1483,6 +1486,7 @@ static uint do_l2_round(struct hashcontext *ctx,
 	uint64_t best_error;
 	uint64_t *params = c->params;
 	uint param_trick = 0;
+	reset_close_params(ctx);	
 	START_TIMER(l2);
 	best_error = calc_best_error(ctx, n);
 	best_param = 0;
