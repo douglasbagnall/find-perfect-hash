@@ -1890,7 +1890,7 @@ static int find_hash(const char *filename, uint bits,
 
 	if (! check_raw_hash(ctx)) {
 		printf("This will never work because the raw hash collides\n");
-		printf("(using %s; try something else\n", hash_names[hash_id]);
+		printf("(using %s; try something else)\n", hash_names[hash_id]);
 		exit(1);
 	}
 	printf("using %s hash -- no collisions\n", hash_names[hash_id]);
