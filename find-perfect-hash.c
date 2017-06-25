@@ -684,7 +684,7 @@ static inline uint64_t next_param(struct hashcontext *ctx,
 	uint64_t p, rot;
 	const uint64_t best_param_chance = best ? 30 : 0;
 	struct rng *rng = ctx->rng;
-	
+
 	add_close_param(ctx, close, close_score);
 
 	if (round < ctx->n_good_params) {
@@ -701,7 +701,7 @@ static inline uint64_t next_param(struct hashcontext *ctx,
 		uint64_t a;
 		if (i < N_CLOSE_PARAMS) {
 			c = ctx->close_params[i].param;
-		}		
+		}
 		switch (trick) {
 		case 0:
 			if (c == best) {
@@ -765,7 +765,7 @@ static inline uint64_t next_param(struct hashcontext *ctx,
 			} else {
 				if (quad) {
 					*used_trick = TRICK_CLOSE_QUAD_BIT_FLIP;
-					
+
 				} else {
 					*used_trick = TRICK_CLOSE_TRIPLE_BIT_FLIP;
 				}
@@ -1427,7 +1427,7 @@ static uint do_last_round(struct hashcontext *ctx,
 				}
 				break;
 			}
-			collisions = pairs.n - i;			
+			collisions = pairs.n - i;
 			if (i == pairs.n) {
 				/* we know there is a rotate that works with
 				   this multiplier */
@@ -1505,7 +1505,7 @@ static uint do_l2_round(struct hashcontext *ctx,
 	uint64_t best_error;
 	uint64_t *params = c->params;
 	uint param_trick = 0;
-	reset_close_params(ctx);	
+	reset_close_params(ctx);
 	START_TIMER(l2);
 	best_error = calc_best_error(ctx, n);
 	best_param = 0;
