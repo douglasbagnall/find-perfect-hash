@@ -603,11 +603,11 @@ const char * const trick_names[] = {
 
 	[TRICK_GOOD_PARAM_ROTATE] = t_db_mut("good param rotate"),
 	[TRICK_BEST_PARAM_ROTATE] = t_best("best param rotate"),
-	[TRICK_CLOSE_PARAM_ROTATE] = t_best("close param rotate"),
+	[TRICK_CLOSE_PARAM_ROTATE] = t_close("close param rotate"),
 
-	[TRICK_GOOD_PARAM_SHIFT] = t_best("good param shift"),
+	[TRICK_GOOD_PARAM_SHIFT] = t_db_mut("good param shift"),
 	[TRICK_BEST_PARAM_SHIFT] = t_best("best param shift"),
-	[TRICK_CLOSE_PARAM_SHIFT] = t_db_mut("close param shift"),
+	[TRICK_CLOSE_PARAM_SHIFT] = t_close("close param shift"),
 
 	[TRICK_BEST_TRIPLE_BIT_FLIP] = t_best("best triple flip"),
 	[TRICK_CLOSE_TRIPLE_BIT_FLIP] = t_close("close triple flip"),
@@ -734,7 +734,8 @@ static inline uint64_t next_param(struct hashcontext *ctx,
 	*used_trick = TRICK_NONE;
 	uint64_t n_bits = n_params + BASE_N - 1;
 	/* low rotates are a bit useless, so we try to select them less
-	   often */
+	   often
+	   XXX needs looking at.*/
 	do {
 		p = rand64(rng);
 		rot = MR_ROT(p) + n_bits;
@@ -1102,6 +1103,7 @@ static uint do_squashing_round(struct hashcontext *ctx,
 		}
 
 		uint64_t rotate = n_bits;
+		uint32_t best_score_here = scores[0];
 		for (h = 0; h < 64; h++) {
 			if (scores[h] < best_score) {
 				printf("new squashing best %16lx & 1«%-2lu at "
@@ -1116,8 +1118,11 @@ static uint do_squashing_round(struct hashcontext *ctx,
 				}
 			}
 			rotate = MIN(rotate - 1, 63);
+			best_score_here = MIN(scores[h], best_score_here);
 		}
-		close_param = param;
+		if (best_score_here < best_score + best_score / 16) {
+			close_param = param;
+		}
 	}
   win:
 	printf("past half_way %'lu times\n", past_half_way);
@@ -1147,6 +1152,7 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 	uint64_t j;
 	uint collisions;
 	uint64_t best_param = 0;
+	uint64_t close_param = 0;
 	uint64_t *params = c->params;
 	struct hash_tuples tuples;
 	uint n_bits = n + BASE_N - 1;
@@ -1180,7 +1186,8 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 	uint param_trick = 0;
 	for (j = 0; j < attempts; j++) {
 		/* we don't need to calculate the full hash */
-		uint64_t param = next_param(ctx, j, n + 1, best_param, 0,
+		uint64_t param = next_param(ctx, j, n + 1, best_param,
+					    close_param,
 					    &param_trick);
 		uint64_t non_collisions = ~0ULL;
 		uint64_t mul = MR_MUL(param);
@@ -1247,13 +1254,17 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 			if (collisions < best_collisions) {
 				best_collisions = collisions;
 				best_param = p;
-				printf("new penultimate best %15lx »%-2lu at %'lu:"
+				printf("new penultimate best "
+				       "%15lx »%-2lu at %'lu:"
 				       " collisions %u (%s)\n",
 				       MR_MUL(p), MR_ROT(p), j, collisions,
 				       trick_names[param_trick]);
 				if (collisions == 0) {
 					goto win;
 				}
+			}
+			if (collisions < best_collisions + 5) {
+				close_param = param;
 			}
 		} else {
 			uint rotate = n_bits;
@@ -1266,13 +1277,18 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 					if (collisions < best_collisions) {
 						best_collisions = collisions;
 						best_param = p;
-						printf("new penultimate best %15lx »%-2lu at %'lu:"
+						printf("new penultimate best "
+						       "%15lx »%-2lu at %'lu:"
 						       " collisions %u (%s)\n",
-						       MR_MUL(p), MR_ROT(p), j, collisions,
+						       MR_MUL(p), MR_ROT(p), j,
+						       collisions,
 						       trick_names[param_trick]);
 						if (collisions == 0) {
 							goto win;
 						}
+					}
+					if (collisions < best_collisions + 5) {
+						close_param = param;
 					}
 				}
 				nc >>= 1;
@@ -1313,6 +1329,7 @@ static uint do_last_round(struct hashcontext *ctx,
 	uint64_t j;
 	uint collisions, best_collisions = UINT_MAX;
 	uint64_t best_param = 0;
+	uint64_t close_param = 0;
 	uint64_t *params = c->params;
 	struct hash_tuples tuples;
 
@@ -1342,7 +1359,8 @@ static uint do_last_round(struct hashcontext *ctx,
 		 */
 		for (j = 0; j < exact_attempts; j++) {
 			/* we don't need to calculate the full hash */
-			uint64_t p = next_param(ctx, j, n_params, best_param, 0,
+			uint64_t p = next_param(ctx, j, n_params, best_param,
+						close_param,
 						&param_trick);
 			uint64_t non_collisions = (uint64_t)-1ULL;
 			for (i = 0; i < pairs.n; i++) {
@@ -1363,6 +1381,8 @@ static uint do_last_round(struct hashcontext *ctx,
 					       "(%s)\n",
 					       MR_MUL(p), j, i,
 					       trick_names[param_trick]);
+				} else if (i > best_run - 5) {
+					close_param = p;
 				}
 				break;
 			}
@@ -1414,6 +1434,8 @@ static uint do_last_round(struct hashcontext *ctx,
 				printf("found a winner after %'lu\n", j);
 				break;
 			}
+		} else if (collisions < best_collisions + 5) {
+			close_param = p;
 		}
 	}
   win:
@@ -1438,6 +1460,7 @@ static uint do_l2_round(struct hashcontext *ctx,
 	uint collisions;
 	uint64_t collisions2, best_collisions2 = 0;
 	uint64_t best_param = 0;
+	uint64_t close_param = 0;
 	uint64_t best_error;
 	uint64_t *params = c->params;
 	uint param_trick = 0;
@@ -1448,7 +1471,8 @@ static uint do_l2_round(struct hashcontext *ctx,
 	printf("making %'lu attempts\n", attempts);
 
 	for (j = 0; j < attempts; j++) {
-		params[n] = next_param(ctx, j, n, best_param, 0, &param_trick);
+		params[n] = next_param(ctx, j, n, best_param,
+				       close_param, &param_trick);
 		collisions2 = test_params_with_l2_running(
 			ctx,
 			params,
@@ -1475,6 +1499,8 @@ static uint do_l2_round(struct hashcontext *ctx,
 				}
 				break;
 			}
+		} else if (collisions2 < best_collisions2 + best_collisions2 / 8) {
+			close_param = params[n];
 		}
 	}
   done:
@@ -1718,16 +1744,13 @@ static void print_c_code(struct hashcontext *ctx,
 		uint64_t rot = MR_ROT(x);
 		uint mask = MR_MASK(i);
 		/* XXX untested */
-		if (rot + i < 64) {
+		if (rot >= i) {
 			printf("\tr |= ((h * %#17lxULL) >> %2lu) & %#6x;\n",
-			       mul, rot, mask);
-		} else if (rot + i == 64) {
-			printf("\tr |=  (h * %#17lxULL)          & %#6x;\n",
-			       mul, mask);
+			       mul, 64 - rot, mask);
 		} else {
 			/* we need to shift backwards */
 			printf("\tr |= ((h * %#17lxULL) << %2lu) & %#6x;\n",
-			       mul, rot + i - 64, mask);
+			       mul, rot, mask);
 		}
 	}
 	printf("\treturn r;\n");
