@@ -674,7 +674,7 @@ static inline uint64_t next_param(struct hashcontext *ctx,
 	}
 	uint64_t c = best;
 	uint threshold = N_CLOSE_PARAMS + best_param_chance;
-	uint i = rand64(rng) & ((1 << 15) - 1);
+	uint i = rand64(rng) & ((1 << 14) - 1);
 	if (i < threshold) {
 		p = rand64(rng);
 		uint trick = p & 3;
