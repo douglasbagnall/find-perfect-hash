@@ -2,11 +2,18 @@
 #define DETERMINISTIC 0
 #define MAX_SMALL_TUPLE 200
 
+#define N_CLOSE_PARAMS 128
+
 struct hashdata {
 	const char *string;
 	unsigned int stringlen;
 	uint64_t raw_hash;
 	uint32_t running_hash;
+};
+
+struct close_param {
+	uint64_t param;
+	uint score;
 };
 
 struct hashcontext {
@@ -21,6 +28,7 @@ struct hashcontext {
 	uint64_t *good_params;
 	uint n_good_params;
 	bool case_insensitive;
+	struct close_param *close_params;
 };
 
 struct multi_rot {
@@ -64,5 +72,3 @@ struct hash_tuples {
 		    (1 << (BASE_N + (i) - 1)))
 
 #define MR_COMPONENT(x, mul, rot, mask)(ROTATE((x * mul), rot) & mask)
-
-
