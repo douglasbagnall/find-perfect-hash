@@ -648,15 +648,12 @@ enum next_param_tricks {
 	TRICK_NONE = 0,
 	TRICK_GOOD_PARAM,
 
-	TRICK_GOOD_PARAM_BIT_FLIP,
 	TRICK_BEST_PARAM_BIT_FLIP,
 	TRICK_CLOSE_PARAM_BIT_FLIP,
 
-	TRICK_GOOD_PARAM_ROTATE,
 	TRICK_BEST_PARAM_ROTATE,
 	TRICK_CLOSE_PARAM_ROTATE,
 
-	TRICK_GOOD_PARAM_SHIFT,
 	TRICK_BEST_PARAM_SHIFT,
 	TRICK_CLOSE_PARAM_SHIFT,
 
@@ -669,7 +666,6 @@ enum next_param_tricks {
 
 #define t_random(x) x
 #define t_db(x) C_CYAN x C_NORMAL
-#define t_db_mut(x) C_LILAC x C_NORMAL
 #define t_best(x) C_YELLOW x C_NORMAL
 #define t_close(x) C_LT_GREEN x C_NORMAL
 
@@ -677,15 +673,12 @@ const char * const trick_names[] = {
 	[TRICK_NONE] = t_random("random"),
 	[TRICK_GOOD_PARAM] = t_db("good param"),
 
-	[TRICK_GOOD_PARAM_BIT_FLIP] = t_db_mut("good param bit flip"),
 	[TRICK_BEST_PARAM_BIT_FLIP] = t_best("best param bit flip"),
 	[TRICK_CLOSE_PARAM_BIT_FLIP] = t_close("close param bit flip"),
 
-	[TRICK_GOOD_PARAM_ROTATE] = t_db_mut("good param rotate"),
 	[TRICK_BEST_PARAM_ROTATE] = t_best("best param rotate"),
 	[TRICK_CLOSE_PARAM_ROTATE] = t_close("close param rotate"),
 
-	[TRICK_GOOD_PARAM_SHIFT] = t_db_mut("good param shift"),
 	[TRICK_BEST_PARAM_SHIFT] = t_best("best param shift"),
 	[TRICK_CLOSE_PARAM_SHIFT] = t_close("close param shift"),
 
@@ -697,7 +690,6 @@ const char * const trick_names[] = {
 };
 #undef t_random
 #undef t_db
-#undef t_db_mut
 #undef t_best
 #undef t_close
 
