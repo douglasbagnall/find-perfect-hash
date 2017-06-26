@@ -1764,9 +1764,14 @@ static void init_multi_rot(struct hashcontext *ctx,
 			return;
 		}
 		/* special cases for the last two rounds */
-		do_penultimate_round(ctx, c, n_candidates * 2,
-				     ctx->n_params - 2, UINT_MAX);
-
+		if (stats.max == 2) {
+			printf("penultimate hash only pairs! "
+			       "using do_last_round\n");
+			do_last_round(ctx, c, n_candidates, ctx->n_params - 1);
+		} else {
+			do_penultimate_round(ctx, c, n_candidates * 2,
+					     ctx->n_params - 2, UINT_MAX);
+		}
 		if (penultimate_retry) {
 			retry(ctx, c, n_candidates, ctx->n_params - 1,
 			      penultimate_retry, 20, true);
