@@ -526,58 +526,6 @@ static uint64_t test_params_with_l2_running(struct hashcontext *ctx,
 }
 
 
-
-static uint find_non_colliding_strings(struct hashcontext *ctx,
-				       uint64_t *params, uint n,
-				       bool remove_non_colliding)
-{
-	int j, k;
-	uint32_t hash_mask = (1 << ctx->bits) - 1;
-	uint16_t *hits = ctx->hits;
-	uint worst = 0;
-	uint best = UINT_MAX;
-	uint n_bits = n + BASE_N - 1;
-	/* hash once for the counts */
-	for (j = 0; j < ctx->n; j++) {
-		uint32_t hash = unmasked_hash(ctx->data[j].raw_hash,
-					      params, n);
-		hash &= hash_mask;
-		hits[hash]++;
-	}
-	/* hash again to find the unique ones */
-	k = 0;
-	for (j = 0; j < ctx->n; j++) {
-		uint32_t hash = unmasked_hash(ctx->data[j].raw_hash,
-					      params, n);
-		hash &= hash_mask;
-		worst = MAX(worst, hits[hash]);
-		best = MIN(best, hits[hash]);
-
-		if (remove_non_colliding && hits[hash] != 1) {
-			ctx->data[k] = ctx->data[j];
-			k++;
-		}
-	}
-
-	if (remove_non_colliding) {
-		ctx->n = k;
-		printf("after %d params (%d bits) dropped %u unique strings, "
-		       "leaving %u\n",
-		       n, n_bits, j - k, k);
-	} else {
-		printf("Done %d params (%d bits), not dropping unique strings\n",
-		       n, n_bits);
-	}
-	printf("worst is %u; best is %u\n", worst, best);
-
-	if (worst > 1 << (ctx->bits - n_bits)) {
-		printf("the situation is hopeless\n");
-	}
-
-	memset(hits, 0, (1 << ctx->bits) * sizeof(hits[0]));
-	return worst;
-}
-
 static uint64_t calc_best_error(struct hashcontext *ctx, uint n_params)
 {
 	uint n_bits = BASE_N + n_params;
@@ -925,6 +873,7 @@ struct tuple_stats {
 	double mean;
 	double stddev;
 	uint count;
+	double past_triples_chance;
 };
 
 static struct tuple_stats find_unresolved_small_tuples(struct hashcontext *ctx,
@@ -945,7 +894,7 @@ static struct tuple_stats find_unresolved_small_tuples(struct hashcontext *ctx,
 		max_size = MIN(max_size, MAX_SMALL_TUPLE);
 	}
 	dest->max_size = max_size;
-	struct tuple_stats stats = {2, max_size, 0, 0, 0};
+	struct tuple_stats stats = {2, 0, 0, 0, 0, 0};
 
 	for (j = 0; j < ctx->n; j++) {
 		uint64_t raw = ctx->data[j].raw_hash;
@@ -974,11 +923,10 @@ static struct tuple_stats find_unresolved_small_tuples(struct hashcontext *ctx,
 	uint64_t sum = 0;
 	uint64_t sum2 = 0;
 	uint64_t n_tuples = 0;
-	uint max_occuring = 0;
 	for (j = max_size; j >= 2; j--) {
 		max_count = MAX(max_count, size_counts[j]);
-		if (max_occuring == 0 && size_counts[j]) {
-			max_occuring = j;
+		if (stats.max == 0 && size_counts[j]) {
+			stats.max = j;
 		}
 	}
 	for (j = 2; j <= max_size; j++) {
@@ -993,7 +941,7 @@ static struct tuple_stats find_unresolved_small_tuples(struct hashcontext *ctx,
 		n_tuples += count;
 
 		const char *s = "#############################################";
-		if (j <= max_occuring && ! silent) {
+		if (j <= stats.max && ! silent) {
 			uint len = count * strlen(s) / max_count;
 			if (count && len == 0) {
 				s = ":";
@@ -1003,13 +951,10 @@ static struct tuple_stats find_unresolved_small_tuples(struct hashcontext *ctx,
 			       COLOUR(C_DARK_YELLOW, "%.*s\n"), count, j,
 			       len, s);
 		}
-		if (count) {
-			stats.max = j;
-		}
 	}
 	if (! silent) {
 		printf("%4u tuples of size > %u\n", size_counts[max_size + 1],
-		       max_occuring);
+		       stats.max);
 	}
 	double scale = 1.0 / n_tuples;
 	stats.mean = sum * scale;
@@ -1019,8 +964,13 @@ static struct tuple_stats find_unresolved_small_tuples(struct hashcontext *ctx,
 	dest->tuples[1] = (struct tuple_list){NULL, 0};
 
 	for (j = 0; j <= max_size; j++) {
-		uint64_t *array = calloc(j * size_counts[j], sizeof(array[0]));
-		dest->tuples[j] = (struct tuple_list){array, 0};
+		if (size_counts[j]) {
+			uint64_t *array = calloc(j * size_counts[j],
+						 sizeof(array[0]));
+			dest->tuples[j] = (struct tuple_list){array, 0};
+		} else {
+			dest->tuples[j] = (struct tuple_list){NULL, 0};
+		}
 	}
 	for (j = 0; j < n_hashes; j++) {
 		struct hash_big_tuple *p = &tuples[j];
@@ -1040,10 +990,20 @@ static struct tuple_stats find_unresolved_small_tuples(struct hashcontext *ctx,
 			       size_counts[j], j, dest->tuples[j].n);
 		}
 	}
+
+	if (stats.max <= 4) {
+		/* triples have 6/8 chance of succeeding. quads have 6/16. */
+		double n3 = dest->tuples[3].n;
+		double n4 = dest->tuples[4].n;
+		stats.past_triples_chance = exp(n4 * log(6./16.) +
+						n3 * log(6./8.));
+	}
+
 	free(tuples);
 	free(size_counts);
 	return stats;
 }
+
 
 static void free_tuple_data(struct hash_tuples *tuples)
 {
@@ -1054,6 +1014,19 @@ static void free_tuple_data(struct hash_tuples *tuples)
 		}
 	}
 }
+
+
+static struct tuple_stats get_tuple_stats(struct hashcontext *ctx,
+					  uint64_t *params, uint n)
+{
+	struct hash_tuples tuples;
+	struct tuple_stats stats = find_unresolved_small_tuples(ctx, params,
+								n, &tuples, 0,
+								true);
+	free_tuple_data(&tuples);
+	return stats;
+}
+
 
 /* count set bits for each rotate */
 static inline void count_tuple_collisions_8bit(uint64_t *tuple,
@@ -1210,7 +1183,6 @@ static uint do_squashing_round(struct hashcontext *ctx,
 }
 
 
-#define PAST_TRIPLES_CHANCE(n3, n4) exp((n4) * log(6./16.) + (n3) * log(6./8.))
 
 static uint do_penultimate_round(struct hashcontext *ctx,
 				 struct multi_rot *c,
@@ -1233,21 +1205,18 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 		return UINT_MAX;
 	}
 
-	/* triples have 6/8 chance of succeeding. quads have 6/16. */
-	double past_triples_chance = PAST_TRIPLES_CHANCE(tuples.tuples[3].n,
-							 tuples.tuples[4].n);
-
 	attempts *= MAX(1,
-			(uint64_t)sqrt((1.00 / (3e-4 + past_triples_chance))));
+			(uint64_t)sqrt((1.00 /
+					(3e-4 + stats.past_triples_chance))));
 	printf("making %'lu attempts\n", attempts);
 	printf("past_triples_chance is %.3e\n",
-	       past_triples_chance);
+	       stats.past_triples_chance);
 	reset_close_params(ctx);
 
 	/* if there are a lot going through triples, it is better to do the
 	   64-way scan of pairs */
 
-	bool parallel_pair_search = (past_triples_chance > 3.0 / 64);
+	bool parallel_pair_search = (stats.past_triples_chance > 3.0 / 64);
 	if (parallel_pair_search) {
 		printf("using parallel penultimate search\n");
 	}
@@ -1366,7 +1335,7 @@ static uint do_penultimate_round(struct hashcontext *ctx,
   win:
 	printf("past triples %'lu times (freq. %.2e; predicted %.2e)\n",
 	       past_triples, past_triples / (attempts * 64.0),
-	       past_triples_chance);
+	       stats.past_triples_chance);
 
 	if (best_param != 0) {
 		params[n] = best_param;
@@ -1622,12 +1591,9 @@ static void retry(struct hashcontext *ctx,
 
 		update_running_hash(ctx, params, n_params - 1);
 
+		/* find the tuples just for the stats */
 		stats = find_unresolved_small_tuples(ctx, params, n_params - 1,
 						     &tuples, 0, true);
-		uint n3 = tuples.tuples[3].n;
-		uint n4 = tuples.tuples[4].n;
-		double past_triples_chance = PAST_TRIPLES_CHANCE(n3, n4);
-
 		free_tuple_data(&tuples);
 
 		if (stats.max > max_tuple_size) {
@@ -1639,7 +1605,7 @@ static void retry(struct hashcontext *ctx,
 		if (stats.max == 2) {
 			do_last_round(ctx, c, attempts, n_params);
 		} else if (stats.max <= 4 && do_penultimate &&
-			   attempts > 1.0 / past_triples_chance) {
+			   attempts > 1.0 / stats.past_triples_chance) {
 			printf(COLOUR(C_YELLOW,
 				      "using penultimate method\n"));
 			do_penultimate_round(ctx, c, attempts * 2,
@@ -1716,10 +1682,9 @@ static void init_multi_rot(struct hashcontext *ctx,
 {
 	uint i;
 	uint best;
-	uint worst = ctx->n;
 	uint64_t attempts;
-	uint64_t original_n_strings = ctx->n;
 	uint64_t *params = c->params;
+	struct tuple_stats stats;
 	update_running_hash(ctx, params, 0);
 
 	attempts = n_candidates * 20UL;
@@ -1735,18 +1700,45 @@ static void init_multi_rot(struct hashcontext *ctx,
 	}
 	if (ctx->n_params > 2) {
 		for (i = 1; i < ctx->n_params - 2; i++) {
-			attempts = n_candidates * original_n_strings / ctx->n;
+			attempts = n_candidates;
 			if (i < quick_early_params) {
 				attempts = 1000;
 			}
-			worst = find_non_colliding_strings(ctx, params, i,
-							   false);
+			printf("Beginning round %d (%d bits)\n",
+			       i, i + BASE_N);
 
-			if (worst > MAX_SMALL_TUPLE) {
+			stats = get_tuple_stats(ctx, params, i);
+
+			printf("max is %u; min is %u\n", stats.max, stats.min);
+			if (stats.max > 1 << (ctx->bits - i - BASE_N + 1)) {
+				printf(COLOUR(C_RED,
+					      "the situation is hopeless\n"));
+			}
+			bool use_penultimate = false;
+			if (stats.past_triples_chance != 0) {
+				if (stats.past_triples_chance > 1.0 / attempts) {
+					use_penultimate = true;
+					printf("using penultimate method for "
+					       "round %u. attempts %lu "
+					       "expected interval %.1f\n",
+					       i, attempts * 3,
+					       1.0 / stats.past_triples_chance);
+				} else {
+					printf("not using penultimate method."
+					       "attempts %lu expected "
+					       "interval %.1f\n",
+					       attempts,
+					       1.0 / stats.past_triples_chance);
+				}
+			}
+			if (stats.max > MAX_SMALL_TUPLE) {
 				best = do_l2_round(ctx, c, attempts, i);
+			} else if (stats.max <= 4 && use_penultimate) {
+				do_penultimate_round(ctx, c, attempts * 3,
+						     i, UINT_MAX);
 			} else {
 				best = do_squashing_round(ctx, c, attempts, i,
-							  worst, UINT_MAX);
+							  stats.max, UINT_MAX);
 			}
 			printf("best %u\n", best);
 			if (best == 0) {
@@ -1765,8 +1757,9 @@ static void init_multi_rot(struct hashcontext *ctx,
 			retry(ctx, c, n_candidates, ctx->n_params - 2,
 			      post_squash_retry, 20, true);
 		}
-		worst = find_non_colliding_strings(ctx, params, ctx->n_params - 2, false);
-		if (worst > 4) {
+
+		stats = get_tuple_stats(ctx, params, ctx->n_params - 2);
+		if (stats.max > 4) {
 			printf("the situation is hopeless. stopping\n");
 			return;
 		}
