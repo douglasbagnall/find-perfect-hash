@@ -813,8 +813,8 @@ static uint test_all_pairs_all_rot(uint64_t *param,
 	uint n_bits = n_params + BASE_N - 1;
 	uint64_t p = *param & ~MR_ROT_MASK;
 	uint64_t mul = MR_MUL(p);
-	static uint8_t ones8[64] __attribute__((__aligned__(ALIGNMENT)));
-	static uint64_t *ones = (uint64_t*)ones8;
+	uint8_t ones8[64] __attribute__((__aligned__(ALIGNMENT)));
+	uint64_t *ones = (uint64_t*)ones8;
 
 	ones[0] = ones[1] = ones[2] = ones[3] = 0ULL;
 	ones[4] = ones[5] = ones[6] = ones[7] = 0ULL;
