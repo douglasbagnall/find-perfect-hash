@@ -67,14 +67,6 @@ static inline void rng_random_init(struct rng *rng)
 	rng_init(rng, seed);
 }
 
-static inline uint32_t rand_range(struct rng *rng, uint32_t low, uint32_t high)
-{
-	/* inclusive of top number, just to be different */
-	uint64_t r = rand64(rng);
-	return low + r % (high - low + 1);
-}
-
-
 #define ALIGNMENT 32
 static inline __attribute__((__malloc__, __assume_aligned__(ALIGNMENT),
         __returns_nonnull__)) void *
