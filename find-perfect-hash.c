@@ -1104,8 +1104,8 @@ static uint do_squashing_round(struct hashcontext *ctx,
 				   &param_trick);
 		param &= ~MR_ROT_MASK;
 		struct tuple_list t;
-		uint8_t ones[64];
-		uint scores[64];
+		uint8_t ones[64] __attribute__((__aligned__(ALIGNMENT)));
+		uint scores[64] __attribute__((__aligned__(ALIGNMENT)));
 		bool short_cut_exit = false;
 		memset(scores, 0, sizeof(scores));
 		for (k = max; k >= min; k--) {
