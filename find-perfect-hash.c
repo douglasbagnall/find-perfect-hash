@@ -1705,7 +1705,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 				attempts = 1000;
 			}
 			printf("Beginning round %d (%d bits)\n",
-			       i, i + BASE_N);
+			       i + 1, i + BASE_N);
 
 			stats = get_tuple_stats(ctx, params, i);
 
