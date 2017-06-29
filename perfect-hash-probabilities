@@ -68,7 +68,11 @@ def prob_of_perfection(n, m, k):
     return p
 
 def main():
-    n, m, k = [int(x) for x in sys.argv[1:]]
+    try:
+        n, m, k = [int(x) for x in sys.argv[1:]]
+    except ValueError as e:
+        print e
+        print "%s <n values> <param bits> <n bits>" % sys.argv[0]
     prob_of_perfection(n, m, k)
 
 main()
