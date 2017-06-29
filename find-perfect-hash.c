@@ -655,7 +655,7 @@ static inline uint64_t next_param(struct hashcontext *ctx,
 	/* these ones work perfect for the first 2 params in
 	   ldap_display_names */
 	uint64_t p, rot;
-	const uint64_t best_param_chance = best ? 30 : 0;
+	const uint64_t best_param_chance = best ? BEST_PARAM_CHANCE : 0;
 	struct rng *rng = ctx->rng;
 
 	add_close_param(ctx, close, close_score);
@@ -666,7 +666,7 @@ static inline uint64_t next_param(struct hashcontext *ctx,
 	}
 	uint64_t c = best;
 	uint threshold = N_CLOSE_PARAMS + best_param_chance;
-	uint i = rand64(rng) & ((1 << 14) - 1);
+	uint i = rand64(rng) & CLOSE_PARAM_RANGE;
 	if (i < threshold) {
 		p = rand64(rng);
 		uint trick = p & 3;

@@ -2,7 +2,9 @@
 #define DETERMINISTIC 0
 #define MAX_SMALL_TUPLE 200
 
-#define N_CLOSE_PARAMS 128
+#define N_CLOSE_PARAMS 512
+#define BEST_PARAM_CHANCE (N_CLOSE_PARAMS >> 3)
+#define CLOSE_PARAM_RANGE ((1 << 15) - 1)
 
 struct hashdata {
 	const char *string;
