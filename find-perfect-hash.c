@@ -16,7 +16,6 @@
 enum {
 	HASH_FNV32 = 0,
 	HASH_FNV64,
-	HASH_FNV48_SPARSE,
 	HASH_DJB,
 
 	HASH_LAST
@@ -25,7 +24,6 @@ enum {
 const char * const hash_names[] = {
 	[HASH_FNV32] = "fnv32",
 	[HASH_FNV64] = "fnv64",
-	[HASH_FNV48_SPARSE] = "fnv48",
 	[HASH_DJB] = "djb"
 };
 
@@ -54,9 +52,6 @@ static void init_hash(struct hashdata *hash, const char *string,
 		hash->raw_hash = djb;
 	} else if (hash_id == HASH_FNV64) {
 		hash->raw_hash = fnv64;
-	} else if (hash_id == HASH_FNV48_SPARSE) {
-		uint64_t h = (fnv64 & 0xffff) | (fnv32 << 16);		
-		hash->raw_hash = h & (fnv64 >> 16);
 	} else {
 		hash->raw_hash = fnv32;
 	}
