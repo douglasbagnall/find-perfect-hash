@@ -32,6 +32,7 @@ struct hashcontext {
 	bool case_insensitive;
 	uint hash_id;
 	struct close_param *close_params;
+	uint64_t pre_filter_mask;
 };
 
 struct multi_rot {

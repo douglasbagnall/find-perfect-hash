@@ -72,6 +72,132 @@ static struct hashdata *new_hashdata(struct strings *strings,
 	return data;
 }
 
+
+static inline uint64_t count_mask_collisions(uint64_t *hits,
+					     struct hashdata *hashes,
+					     uint64_t mask,
+					     uint n)
+{
+	uint64_t collisions = 0;
+	uint j;
+	for (j = 0; j < n; j++) {
+		uint64_t h = hashes[j].raw_hash & mask;
+		uint32_t f = h >> 6;
+		uint64_t g = 1UL << (h & 63);
+		collisions += (hits[f] & g) ? 1 : 0;
+		hits[f] |= g;
+	}
+	return collisions;
+}
+
+
+static uint64_t find_hash_bit_filter(struct hashcontext *ctx,
+				     struct hashdata *data)
+{
+	uint b, j, collisions;
+	uint hash_size;
+	struct hashdata *hashes = ctx->data;
+	uint64_t h, i;
+		uint64_t best_mask = 0;
+
+	if (ctx->hash_id == HASH_FNV64) {
+		/* unlikely to work! */
+		hash_size = 64;
+	} else {
+		hash_size = 32;
+	}
+
+	uint64_t *hits = calloc(1UL << (hash_size - 3), 1);
+
+	for (b = ctx->bits + 3; b < ctx->bits + 10; b++) {
+		uint best_collisions = UINT_MAX;
+		uint64_t start_mask = ((1 << b) - 1) << (hash_size - b - 2);
+		uint64_t mask = start_mask;
+		uint64_t max = mask << (hash_size - b);
+		uint ignored_best_masks = 0;
+		printf("searching for a minimal mask of size %u\n", b);
+		double r = 1.0, r2 = 1.0;
+		for (double x = 0.0; x < b; x++) {
+			r *= hash_size - x;
+			r2 *= x + 1.0;
+		}
+		printf("this should take %'.0f rounds\n", r / r2);
+		i = 0;
+		do {
+                        collisions = count_mask_collisions(hits,
+							   hashes,
+							   mask,
+							   ctx->n);
+			if (collisions == 0) {
+				printf("found good mask %lx after %'lu rounds\n",
+				       mask, i);
+				best_mask = mask;
+				goto done;
+			}
+			if (collisions < best_collisions) {
+				best_collisions = collisions;
+				best_mask = mask;
+				ignored_best_masks = 0;
+				printf("new best at %'lu: %lx score %u\n",
+				       i, mask, collisions);
+			} else if (collisions == best_collisions) {
+				ignored_best_masks++;
+			}
+			/* go through again to zero them out */
+			for (j = 0; j < ctx->n; j++) {
+				h = hashes[j].raw_hash & mask;
+				uint32_t f = h >> 6;
+				hits[f] = 0UL;
+			}
+			if (unlikely(mask == max)) {
+				mask = (1 << b) - 1;
+			} else {
+				uint32_t t = (mask | (mask - 1)) + 1;
+				mask = t | ((((t & -t) / (mask & -mask)) >> 1) - 1);
+			}
+			i++;
+		} while (mask != start_mask);
+
+		printf("best collisions %u mask %lx after %'lu rounds\n",
+		       best_collisions, mask, i);
+		if (ignored_best_masks) {
+			printf("ignoring %u others\n",
+			       ignored_best_masks);
+		}
+		if (best_collisions < 20) {
+			printf("trying to add one bit (up to %u)\n", b + 1);
+			for (i = 0; i < hash_size; i++) {
+				mask = best_mask | (1 << i);
+				if (mask == best_mask) {
+					continue;
+				}
+				collisions = count_mask_collisions(hits,
+								   hashes,
+								   mask,
+								   ctx->n);
+				if (collisions == 0) {
+					printf("found mask %lx\n", mask);
+					best_mask = mask;
+					goto done;
+				} else {
+					printf("adding %lu: %u collisions\n", i,
+						collisions);
+
+				}
+			}
+		}
+	}
+  done:
+	free(hits);
+	if (collisions != 0) {
+		printf("no mask found\n");
+		return 0;
+	}
+	printf("found mask %lx\n", best_mask);
+	return best_mask;
+}
+
+
 static bool check_raw_hash(struct hashcontext *ctx)
 {
 	uint i;
@@ -1816,6 +1942,10 @@ static void print_c_code(struct hashcontext *ctx,
 		printf("\t\th *= %u;\n", FNV32);
 	}
 	printf("\t}\n");
+	if (ctx->pre_filter_mask != 0) {
+		printf("\th &= 0x%lx;\n", ctx->pre_filter_mask);
+	}
+
 	for (i = 0; i < ctx->n_params; i++) {
 		uint64_t x = c->params[i];
 		uint64_t mul = MR_MUL(x);
@@ -1839,7 +1969,8 @@ static void print_c_code(struct hashcontext *ctx,
 static struct hashcontext *new_context(const char *filename, uint bits,
 				       struct rng *rng, const char *db_name,
 				       bool case_insensitive,
-				       uint hash_id)
+				       uint hash_id,
+				       bool pre_filter_bits)
 {
 	struct strings strings = load_strings(filename);
 	struct hashdata *data = new_hashdata(&strings,
@@ -1864,6 +1995,26 @@ static struct hashcontext *new_context(const char *filename, uint bits,
 	size_t cp_size = N_CLOSE_PARAMS * sizeof(struct close_param);
 	ctx->close_params = malloc(cp_size);
 	reset_close_params(ctx);
+
+	/* check the hash BEFORE we do the filter bits, because that can take
+	   hours */
+	if (! check_raw_hash(ctx)) {
+		printf("This will never work because the raw hash collides\n");
+		printf("(using %s; try something else)\n", hash_names[hash_id]);
+		return NULL;
+	}
+	if (pre_filter_bits) {
+		ctx->pre_filter_mask = find_hash_bit_filter(ctx, ctx->data);
+		for (uint j = 0; j < ctx->n; j++) {
+			ctx->data[j].raw_hash &= ctx->pre_filter_mask;
+		}
+		if (! check_raw_hash(ctx)) {
+			printf("the filter mask makes collisions\n");
+			return NULL;
+		}
+	} else {
+		ctx->pre_filter_mask = ~0ULL;
+	}
 	return ctx;
 }
 
@@ -1885,19 +2036,31 @@ static int find_hash(const char *filename, uint bits,
 		     bool c_code,
 		     bool case_insensitive,
 		     uint quick_early_params,
-		     uint hash_id)
+		     uint hash_id,
+		     bool pre_filter_bits)
 {
 	struct hashcontext *ctx = new_context(filename, bits, rng,
 					      db_filename,
 					      case_insensitive,
-					      hash_id);
+					      hash_id,
+					      pre_filter_bits);
+	if (ctx == NULL) {
+		printf("Context creation fialed for some reason\n");
+		exit(1);
+	}
 
 	if (! check_raw_hash(ctx)) {
 		printf("This will never work because the raw hash collides\n");
 		printf("(using %s; try something else)\n", hash_names[hash_id]);
 		exit(1);
 	}
-	printf("using %s hash -- no collisions\n", hash_names[hash_id]);
+	if (pre_filter_bits) {
+		printf("using %s hash mask %lx -- no collisions\n",
+		       hash_names[hash_id],
+		       ctx->pre_filter_mask);
+	} else {
+		printf("using %s hash -- no collisions\n", hash_names[hash_id]);
+	}
 
 	if (import_text) {
 		import_text_parameters(ctx, import_text);
@@ -1917,7 +2080,8 @@ static int find_hash(const char *filename, uint bits,
 
 	struct hashcontext *ctx2 = new_context(filename, bits, rng,
 					       NULL, case_insensitive,
-					       hash_id);
+					       hash_id,
+					       ctx->pre_filter_mask != ~0ULL);
 
 	describe_hash(ctx2, &c, NULL, ctx->n_params, true);
 	if (true) {
@@ -1952,6 +2116,7 @@ int main(int argc, const char *argv[])
 	uint hash_id = HASH_FNV32;
 	const char *strings = NULL;
 	struct rng rng;
+	int pre_filter_bits = 0;
 
 	struct argparse argparse;
 	struct argparse_option options[] = {
@@ -1978,6 +2143,8 @@ int main(int argc, const char *argv[])
 			    "skip quickly over this many params"),
 		OPT_STRING('H', "hash-function", &hash_function,
 			   "raw hash to use (one of fnv32, fnv64, djb)"),
+		OPT_BOOLEAN('F', "pre-filter-bits", &pre_filter_bits,
+			   "prune redundant hash bits"),
 		OPT_END(),
 	};
 	static const char *const usages[] = {
@@ -2020,5 +2187,5 @@ int main(int argc, const char *argv[])
 	return find_hash(strings, bits, effort, &rng, db, import_text,
 			 post_squash_retry, penultimate_retry, c_code,
 			 case_insensitive, quick_early_params,
-			 hash_id);
+			 hash_id, pre_filter_bits);
 }
