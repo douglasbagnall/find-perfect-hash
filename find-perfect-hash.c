@@ -73,127 +73,104 @@ static struct hashdata *new_hashdata(struct strings *strings,
 }
 
 
-static inline uint64_t count_mask_collisions(uint64_t *hits,
-					     struct hashdata *hashes,
-					     uint64_t mask,
-					     uint n)
+static inline bool find_mask_collision(struct hashcontext *ctx,
+				       uint64_t *values,
+				       uint n_values,
+				       uint64_t hash_mask)
 {
-	uint64_t collisions = 0;
-	uint j;
-	for (j = 0; j < n; j++) {
-		uint64_t h = hashes[j].raw_hash & mask;
-		uint32_t f = h >> 6;
-		uint64_t g = 1UL << (h & 63);
-		collisions += (hits[f] & g) ? 1 : 0;
-		hits[f] |= g;
+	uint i;
+	uint index;
+	uint bucket_mask = n_values - 1;
+	bool collides = false;
+
+	for (i = 0; i < ctx->n; i++) {
+		uint64_t h = ctx->data[i].raw_hash;
+		h &= hash_mask;
+		if (unlikely(h == 0ULL)) {
+			collides = true;
+			goto end;
+		}
+
+		/* hash of hash */
+		uint64_t h2 = (h >> 37) ^ (h >> 29) ^ (h >> 16) ^ h;
+
+		index = h2 & bucket_mask;
+		while (values[index] != 0) {
+			if (values[index] == h) {
+				collides = true;
+				goto end;
+			}
+			index = (index + 1) & bucket_mask;
+		}
+		values[index] = h;
 	}
-	return collisions;
+  end:
+	memset(values, 0, n_values * sizeof(uint64_t));
+	return collides;
 }
 
 
 static uint64_t find_hash_bit_filter(struct hashcontext *ctx,
 				     struct hashdata *data)
 {
-	uint b, j, collisions;
 	uint hash_size;
-	struct hashdata *hashes = ctx->data;
-	uint64_t h, i;
-		uint64_t best_mask = 0;
+	uint64_t i, rounds = 10000000;
+	uint64_t best_mask, mask, mask_mask;
+	uint32_t mul = 69069;
 
 	if (ctx->hash_id == HASH_FNV64) {
 		/* unlikely to work! */
 		hash_size = 64;
+		best_mask = UINT64_MAX;
+		mask = 0x5555aaaa5555aaaa;
+		mask_mask = UINT64_MAX;
 	} else {
 		hash_size = 32;
+		best_mask = UINT32_MAX;
+		mask = 0x5555aaaa;
+		mask_mask = UINT32_MAX;
 	}
 
-	uint64_t *hits = calloc(1UL << (hash_size - 3), 1);
+	uint n_buckets = 256;
+	while (n_buckets < ctx->n * 2) {
+		n_buckets *= 2;
+	}
+	printf("using %u buckets\n", n_buckets);
+	uint64_t *buckets = calloc(n_buckets, sizeof(uint64_t));
 
-	for (b = ctx->bits + 3; b < ctx->bits + 10; b++) {
-		uint best_collisions = UINT_MAX;
-		uint64_t start_mask = ((1 << b) - 1) << (hash_size - b - 2);
-		uint64_t mask = start_mask;
-		uint64_t max = mask << (hash_size - b);
-		uint ignored_best_masks = 0;
-		printf("searching for a minimal mask of size %u\n", b);
-		double r = 1.0, r2 = 1.0;
-		for (double x = 0.0; x < b; x++) {
-			r *= hash_size - x;
-			r2 *= x + 1.0;
+	uint best_size = hash_size;
+
+	printf("searching for a minimal mask in %lu rounds\n", rounds);
+	uint32_t n_tests = 0;
+	uint32_t n_too_small = 0;
+
+	for (i = 0; i < rounds; i++) {
+		mask *= mul;
+		mask &= mask_mask;
+		uint bits = __builtin_popcountll(mask);
+		if (bits >= best_size) {
+			continue;
 		}
-		printf("this should take %'.0f rounds\n", r / r2);
-		i = 0;
-		do {
-                        collisions = count_mask_collisions(hits,
-							   hashes,
-							   mask,
-							   ctx->n);
-			if (collisions == 0) {
-				printf("found good mask %lx after %'lu rounds\n",
-				       mask, i);
-				best_mask = mask;
-				goto done;
-			}
-			if (collisions < best_collisions) {
-				best_collisions = collisions;
-				best_mask = mask;
-				ignored_best_masks = 0;
-				printf("new best at %'lu: %lx score %u\n",
-				       i, mask, collisions);
-			} else if (collisions == best_collisions) {
-				ignored_best_masks++;
-			}
-			/* go through again to zero them out */
-			for (j = 0; j < ctx->n; j++) {
-				h = hashes[j].raw_hash & mask;
-				uint32_t f = h >> 6;
-				hits[f] = 0UL;
-			}
-			if (unlikely(mask == max)) {
-				mask = (1 << b) - 1;
-			} else {
-				uint32_t t = (mask | (mask - 1)) + 1;
-				mask = t | ((((t & -t) / (mask & -mask)) >> 1) - 1);
-			}
-			i++;
-		} while (mask != start_mask);
-
-		printf("best collisions %u mask %lx after %'lu rounds\n",
-		       best_collisions, mask, i);
-		if (ignored_best_masks) {
-			printf("ignoring %u others\n",
-			       ignored_best_masks);
+		if (bits < MIN(ctx->bits + 3, best_size - 1)) {
+			n_too_small++;
+			continue;
 		}
-		if (best_collisions < 20) {
-			printf("trying to add one bit (up to %u)\n", b + 1);
-			for (i = 0; i < hash_size; i++) {
-				mask = best_mask | (1 << i);
-				if (mask == best_mask) {
-					continue;
-				}
-				collisions = count_mask_collisions(hits,
-								   hashes,
-								   mask,
-								   ctx->n);
-				if (collisions == 0) {
-					printf("found mask %lx\n", mask);
-					best_mask = mask;
-					goto done;
-				} else {
-					printf("adding %lu: %u collisions\n", i,
-						collisions);
-
-				}
-			}
+		n_tests++;
+		bool collides = find_mask_collision(ctx,
+						    buckets,
+						    n_buckets,
+						    mask);
+		if (! collides) {
+			printf("found %u bit mask %lx after %'lu rounds\n",
+			       bits, mask, i);
+			best_mask = mask;
+			best_size = bits;
 		}
 	}
-  done:
-	free(hits);
-	if (collisions != 0) {
-		printf("no mask found\n");
-		return 0;
-	}
-	printf("found mask %lx\n", best_mask);
+	free(buckets);
+	printf("found mask %lx of %u bits\n", best_mask, best_size);
+	printf("%lu too big, %u tests, %u too small\n",
+	       i - n_tests - n_too_small, n_tests, n_too_small);
 	return best_mask;
 }
 
