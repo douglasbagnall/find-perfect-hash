@@ -114,9 +114,9 @@ static uint64_t find_hash_bit_filter(struct hashcontext *ctx,
 				     struct hashdata *data)
 {
 	uint hash_size;
-	uint64_t i, rounds = 10000000;
+	uint64_t i, rounds = 1000000;
 	uint64_t best_mask, mask, mask_mask;
-	uint32_t mul = 69069;
+	uint64_t mul = 2862933555777941757UL;
 
 	if (ctx->hash_id == HASH_FNV64) {
 		/* unlikely to work! */
@@ -151,7 +151,7 @@ static uint64_t find_hash_bit_filter(struct hashcontext *ctx,
 		if (bits >= best_size) {
 			continue;
 		}
-		if (bits < MIN(ctx->bits + 3, best_size - 1)) {
+		if (bits < MIN(ctx->bits + 2, best_size - 1)) {
 			n_too_small++;
 			continue;
 		}
