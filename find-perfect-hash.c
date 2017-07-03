@@ -746,14 +746,15 @@ const char * const trick_names[] = {
 
 static inline uint64_t next_param(struct hashcontext *ctx,
 				  uint64_t round, uint n_params,
-				  uint64_t best, uint64_t close,
+				  uint64_t best, uint64_t last_improvement,
+				  uint64_t close,
 				  uint close_score,
 				  uint *used_trick)
 {
 	/* these ones work perfect for the first 2 params in
 	   ldap_display_names */
 	uint64_t p, rot;
-	const uint64_t best_param_chance = best ? BEST_PARAM_CHANCE : 0;
+	uint64_t best_param_chance = best ? BEST_PARAM_CHANCE : 0;
 	struct rng *rng = ctx->rng;
 
 	add_close_param(ctx, close, close_score);
@@ -763,8 +764,15 @@ static inline uint64_t next_param(struct hashcontext *ctx,
 		return ctx->good_params[round];
 	}
 	uint64_t c = best;
+	uint64_t close_param_range = CLOSE_PARAM_RANGE;
+	/* if we have recently jumped, look harder for a best param
+	   mutatation */
+	if (round - last_improvement < 100000) {
+		best_param_chance *= 2;
+		close_param_range >>= 1;
+	}
 	uint threshold = N_CLOSE_PARAMS + best_param_chance;
-	uint i = rand64(rng) & CLOSE_PARAM_RANGE;
+	uint i = rand64(rng) & close_param_range;
 	if (i < threshold) {
 		p = rand64(rng);
 		uint trick = p & 3;
@@ -1200,9 +1208,11 @@ static uint do_squashing_round(struct hashcontext *ctx,
 	uint param_trick = 0;
 	uint64_t param = 0;
 	uint last_score = UINT_MAX;
+	uint64_t last_improvement_round = 0;
 	for (j = 0; j < attempts; j++) {
 		/* we don't need to calculate the full hash */
 		param = next_param(ctx, j, n + 1, best_param,
+				   last_improvement_round,
 				   param, last_score,
 				   &param_trick);
 		param &= ~MR_ROT_MASK;
@@ -1261,6 +1271,7 @@ static uint do_squashing_round(struct hashcontext *ctx,
 				       trick_names[param_trick]);
 				best_score = scores[h];
 				best_param = param + rotate * MR_ROT_STEP;
+				last_improvement_round = j;
 				if (best_score == 0) {
 					printf("squashing has succeeded!\n");
 					goto win;
@@ -1297,6 +1308,7 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 	uint64_t j;
 	uint collisions = UINT_MAX;
 	uint64_t best_param = 0;
+	uint64_t last_improvement_round = 0;
 	uint64_t *params = c->params;
 	struct hash_tuples tuples;
 	uint n_bits = n + BASE_N - 1;
@@ -1330,6 +1342,7 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 	for (j = 0; j < attempts; j++) {
 		/* we don't need to calculate the full hash */
 		param = next_param(ctx, j, n + 1, best_param,
+				   last_improvement_round,
 				   param, collisions,
 				   &param_trick);
 		uint64_t non_collisions = ~0ULL;
@@ -1399,6 +1412,7 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 			if (collisions < best_collisions) {
 				best_collisions = collisions;
 				best_param = p;
+				last_improvement_round = j;
 				printf("new penultimate best "
 				       "%15lx »%-2lu at %'lu:"
 				       " collisions %u (%s)\n",
@@ -1419,6 +1433,7 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 					if (collisions < best_collisions) {
 						best_collisions = collisions;
 						best_param = p;
+						last_improvement_round = j;
 						printf("new penultimate best "
 						       "%15lx »%-2lu at %'lu:"
 						       " collisions %u (%s)\n",
@@ -1469,6 +1484,7 @@ static uint do_last_round(struct hashcontext *ctx,
 	uint collisions = UINT_MAX;
 	uint best_collisions = UINT_MAX;
 	uint64_t best_param = 0;
+	uint64_t last_improvement_round = 0;
 	uint64_t *params = c->params;
 	struct hash_tuples tuples;
 	reset_close_params(ctx);
@@ -1501,6 +1517,7 @@ static uint do_last_round(struct hashcontext *ctx,
 		for (j = 0; j < exact_attempts; j++) {
 			/* we don't need to calculate the full hash */
 			p = next_param(ctx, j, n_params, best_param,
+				       last_improvement_round,
 				       p, collisions,
 				       &param_trick);
 			uint64_t non_collisions = (uint64_t)-1ULL;
@@ -1516,6 +1533,7 @@ static uint do_last_round(struct hashcontext *ctx,
 				}
 				if (i > best_run) {
 					best_param = p;
+					last_improvement_round = j;
 					best_run = i;
 					printf("new best run %15lx  "
 					       "at %'lu: %u pairs "
@@ -1536,6 +1554,7 @@ static uint do_last_round(struct hashcontext *ctx,
 
 					if (collisions == 0) {
 						best_param = p;
+						last_improvement_round = j;
 						printf("WINNING run %15lx »%-2lu at %'lu\n",
 						       MR_MUL(p), MR_ROT(p), j);
 						goto win;
@@ -1559,6 +1578,7 @@ static uint do_last_round(struct hashcontext *ctx,
 	for (j = 0; j < attempts; j++) {
 		/* we don't need to calculate the full hash */
 		p = next_param(ctx, j, n_params, best_param,
+			       last_improvement_round,
 			       p, collisions,
 			       &param_trick);
 		collisions = test_all_pairs_all_rot(&p, pairs, n_params,
@@ -1567,6 +1587,7 @@ static uint do_last_round(struct hashcontext *ctx,
 		if (collisions < best_collisions) {
 			best_collisions = collisions;
 			best_param = p;
+			last_improvement_round = j;
 			printf("new final round best %15lx »%-2lu at "
 			       "%'lu: collisions %u (%s)\n",
 			       MR_MUL(p), MR_ROT(p), j, collisions,
@@ -1600,18 +1621,19 @@ static uint do_l2_round(struct hashcontext *ctx,
 	uint64_t collisions2 = UINT_MAX;
 	uint64_t best_collisions2 = 0;
 	uint64_t best_param = 0;
+	uint64_t last_improvement_round = 0;
 	uint64_t best_error;
 	uint64_t *params = c->params;
 	uint param_trick = 0;
 	reset_close_params(ctx);
 	START_TIMER(l2);
 	best_error = calc_best_error(ctx, n);
-	best_param = 0;
 	best_collisions2 = UINT64_MAX;
 	printf("making %'lu attempts\n", attempts);
 
 	for (j = 0; j < attempts; j++) {
 		params[n] = next_param(ctx, j, n, best_param,
+				       last_improvement_round,
 				       params[n], collisions2,
 				       &param_trick);
 		collisions2 = test_params_with_l2_running(
@@ -1621,6 +1643,7 @@ static uint do_l2_round(struct hashcontext *ctx,
 		if (collisions2 < best_collisions2) {
 			best_collisions2 = collisions2;
 			best_param = params[n];
+			last_improvement_round = j;
 			printf("new best %15lx »%-2lu at %'lu: "
 			       "err %lu > %lu; diff %lu (%s)\n",
 			       MR_MUL(best_param), MR_ROT(best_param),
