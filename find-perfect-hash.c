@@ -1827,11 +1827,11 @@ static void init_multi_rot(struct hashcontext *ctx,
 					       i, attempts * 3,
 					       1.0 / stats.past_triples_chance);
 				} else {
-					printf("not using penultimate method."
-					       "attempts %lu expected "
-					       "interval %.1f\n",
+					printf("not using penultimate method. "
+					       "attempts %lu "
+					       "past threes f %.1g\n",
 					       attempts,
-					       1.0 / stats.past_triples_chance);
+					       stats.past_triples_chance);
 				}
 			}
 			if (stats.max > MAX_SMALL_TUPLE) {
