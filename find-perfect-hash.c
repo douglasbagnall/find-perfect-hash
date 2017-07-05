@@ -2028,7 +2028,7 @@ static void free_context(struct hashcontext *ctx)
 }
 
 static int find_hash(const char *filename, uint bits,
-		     uint n_candidates, struct rng *rng,
+		     uint64_t n_candidates, struct rng *rng,
 		     const char *db_filename,
 		     const char *import_text,
 		     uint64_t post_squash_retry,
