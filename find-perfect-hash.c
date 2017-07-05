@@ -1193,8 +1193,8 @@ static uint do_squashing_round(struct hashcontext *ctx,
 	mean = stats.mean;
 	uint32_t mask = MR_MASK(n);
 
-	attempts /= 20;
-	attempts *= MAX(MIN(stats.mean, 25), 5);
+	attempts /= 20ul;
+	attempts *= MAX(MIN((uint64_t)stats.mean, 20ul), 10ul);
 
 	printf("making %'lu attempts. mask %u max %u min %u "
 	       "mean %.1f dev %.1f\n",
