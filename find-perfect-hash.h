@@ -33,6 +33,10 @@ struct hashcontext {
 	uint hash_id;
 	struct close_param *close_params;
 	uint64_t pre_filter_mask;
+	uint n_processes;
+	uint process_number;
+	int *child_pids;
+	uint64_t *shared_param;
 };
 
 struct multi_rot {

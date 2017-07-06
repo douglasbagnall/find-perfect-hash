@@ -4,14 +4,16 @@
 #include "find-perfect-hash.h"
 #include <locale.h>
 #include "argparse/argparse.h"
-
+#include <unistd.h>
+#include <sys/types.h>
+#include <signal.h>
+#include <sys/mman.h>
 
 #define FNV64 1099511628211UL
 #define FNV64_SEED 14695981039346656037UL
 #define FNV32 16777619
 #define FNV32_SEED 2166136261u
 #define DJB_SEED 5381
-
 
 enum {
 	HASH_FNV32 = 0,
@@ -309,6 +311,51 @@ static void read_db(struct hashcontext *ctx, const char *db_name)
 		ctx->n_good_params = len2 / sizeof(uint64_t);
 	}
 }
+
+
+static int create_subprocesses(struct hashcontext *ctx)
+{
+	uint i;
+	if (ctx->process_number != 0) {
+		printf("trying to fork in child %u\n",
+		       ctx->process_number);
+		return 1;
+	}
+	for (i = 1; i < ctx->n_processes; i++) {
+		pid_t pid = fork();
+		if (pid) {
+			ctx->child_pids[i] = pid;
+			continue;
+		}
+		//close(0);
+		//close(1);
+		//close(2);
+		ctx->process_number = i;
+		rng_init(ctx->rng, rand64(ctx->rng + i));
+		return 0;
+	}
+	return 0;
+}
+
+
+static int shut_down_subprocesses(struct hashcontext *ctx)
+{
+	uint i;
+	if (ctx->process_number != 0) {
+		_exit(0);
+	}
+	for (i = 1; i < ctx->n_processes; i++) {
+		int pid = ctx->child_pids[i];
+		if (pid == 0) {
+			continue;
+		}
+		kill(pid, 15);
+		ctx->child_pids[i] = 0;
+	}
+	//*ctx->shared_param = 0;
+	return 0;
+}
+
 
 static void import_text_parameters(struct hashcontext *ctx, const char *filename)
 {
@@ -698,6 +745,7 @@ static inline void add_close_param(struct hashcontext *ctx,
 enum next_param_tricks {
 	TRICK_NONE = 0,
 	TRICK_GOOD_PARAM,
+	TRICK_SHARED,
 
 	TRICK_BEST_PARAM_BIT_FLIP,
 	TRICK_CLOSE_PARAM_BIT_FLIP,
@@ -717,12 +765,14 @@ enum next_param_tricks {
 
 #define t_random(x) x
 #define t_db(x) C_CYAN x C_NORMAL
+#define t_share(x) C_LILAC x C_NORMAL
 #define t_best(x) C_YELLOW x C_NORMAL
 #define t_close(x) C_LT_GREEN x C_NORMAL
 
 const char * const trick_names[] = {
 	[TRICK_NONE] = t_random("random"),
 	[TRICK_GOOD_PARAM] = t_db("good param"),
+	[TRICK_SHARED] = t_share("shared param"),
 
 	[TRICK_BEST_PARAM_BIT_FLIP] = t_best("best param bit flip"),
 	[TRICK_CLOSE_PARAM_BIT_FLIP] = t_close("close param bit flip"),
@@ -751,13 +801,27 @@ static inline uint64_t next_param(struct hashcontext *ctx,
 				  uint close_score,
 				  uint *used_trick)
 {
-	/* these ones work perfect for the first 2 params in
-	   ldap_display_names */
 	uint64_t p, rot;
 	uint64_t best_param_chance = best ? BEST_PARAM_CHANCE : 0;
 	struct rng *rng = ctx->rng;
 
 	add_close_param(ctx, close, close_score);
+
+	if (ctx->n_processes > 1) {
+		uint64_t shared = *ctx->shared_param;
+		if (shared != best) {
+			*ctx->shared_param = best;
+			if (shared != 0) {
+				//printf("param mismatch round %lu "
+				//       " us %lx them %lx close %lx\n",
+				//       round, best, shared, close);
+				if (shared != close) {
+					*used_trick = TRICK_SHARED;
+					return shared;
+				}
+			}
+		}
+	}
 
 	if (round < ctx->n_good_params) {
 		*used_trick = TRICK_GOOD_PARAM;
@@ -767,8 +831,8 @@ static inline uint64_t next_param(struct hashcontext *ctx,
 	uint64_t close_param_range = CLOSE_PARAM_RANGE;
 	/* if we have recently jumped, look harder for a best param
 	   mutatation */
-	if (round - last_improvement < 100000) {
-		best_param_chance *= 2;
+	if (round - last_improvement < 300000) {
+		best_param_chance *= 3;
 		close_param_range >>= 1;
 	}
 	uint threshold = N_CLOSE_PARAMS + best_param_chance;
@@ -1282,6 +1346,7 @@ static uint do_squashing_round(struct hashcontext *ctx,
 		}
 	}
   win:
+
 	printf("past half_way %'lu times\n", past_half_way);
 	printf("short_cuts: %'lu\n", short_cuts);
 	params[n] = best_param;
@@ -1818,7 +1883,13 @@ static void init_multi_rot(struct hashcontext *ctx,
 		attempts = 1000;
 	}
 
+	if (ctx->n_processes > 1) {
+		create_subprocesses(ctx);
+	}
 	best = do_l2_round(ctx, c, attempts, 0);
+	if (ctx->n_processes > 1) {
+		shut_down_subprocesses(ctx);
+	}
 	if (best == 0) {
 		printf("success in first round!\n");
 		c->collisions = best;
@@ -1857,6 +1928,10 @@ static void init_multi_rot(struct hashcontext *ctx,
 					       stats.past_triples_chance);
 				}
 			}
+			if (ctx->n_processes > 1) {
+				create_subprocesses(ctx);
+			}
+
 			if (stats.max > MAX_SMALL_TUPLE) {
 				best = do_l2_round(ctx, c, attempts, i);
 			} else if (stats.max <= 4 && use_penultimate) {
@@ -1866,6 +1941,10 @@ static void init_multi_rot(struct hashcontext *ctx,
 				best = do_squashing_round(ctx, c, attempts, i,
 							  stats.max, UINT_MAX);
 			}
+			if (ctx->n_processes > 1) {
+				shut_down_subprocesses(ctx);
+			}
+
 			printf("best %u\n", best);
 			if (best == 0) {
 				best = test_params_running(ctx, params, i,
@@ -1970,7 +2049,8 @@ static struct hashcontext *new_context(const char *filename, uint bits,
 				       struct rng *rng, const char *db_name,
 				       bool case_insensitive,
 				       uint hash_id,
-				       bool pre_filter_bits)
+				       bool pre_filter_bits,
+				       uint n_processes)
 {
 	struct strings strings = load_strings(filename);
 	struct hashdata *data = new_hashdata(&strings,
@@ -1995,6 +2075,15 @@ static struct hashcontext *new_context(const char *filename, uint bits,
 	size_t cp_size = N_CLOSE_PARAMS * sizeof(struct close_param);
 	ctx->close_params = malloc(cp_size);
 	reset_close_params(ctx);
+
+	ctx->n_processes = n_processes;
+	if (n_processes > 1) {
+		ctx->shared_param = mmap(NULL, sizeof(uint64_t),
+					 PROT_READ | PROT_WRITE,
+					 MAP_SHARED | MAP_ANONYMOUS,
+					 -1, 0);
+		ctx->child_pids = calloc(n_processes, sizeof(int));
+	}
 
 	/* check the hash BEFORE we do the filter bits, because that can take
 	   hours */
@@ -2027,6 +2116,7 @@ static void free_context(struct hashcontext *ctx)
 	ctx = NULL;
 }
 
+
 static int find_hash(const char *filename, uint bits,
 		     uint64_t n_candidates, struct rng *rng,
 		     const char *db_filename,
@@ -2037,15 +2127,17 @@ static int find_hash(const char *filename, uint bits,
 		     bool case_insensitive,
 		     uint quick_early_params,
 		     uint hash_id,
-		     bool pre_filter_bits)
+		     bool pre_filter_bits,
+		     uint n_processes)
 {
 	struct hashcontext *ctx = new_context(filename, bits, rng,
 					      db_filename,
 					      case_insensitive,
 					      hash_id,
-					      pre_filter_bits);
+					      pre_filter_bits,
+					      n_processes);
 	if (ctx == NULL) {
-		printf("Context creation fialed for some reason\n");
+		printf("Context creation failed for some reason\n");
 		exit(1);
 	}
 
@@ -2065,6 +2157,7 @@ static int find_hash(const char *filename, uint bits,
 	if (import_text) {
 		import_text_parameters(ctx, import_text);
 	}
+
 	struct multi_rot c;
 	c.params = calloc(ctx->n_params, sizeof(uint64_t));
 	c.collisions = UINT_MAX;
@@ -2081,7 +2174,8 @@ static int find_hash(const char *filename, uint bits,
 	struct hashcontext *ctx2 = new_context(filename, bits, rng,
 					       NULL, case_insensitive,
 					       hash_id,
-					       ctx->pre_filter_mask != ~0ULL);
+					       ctx->pre_filter_mask != ~0ULL,
+					       1);
 
 	describe_hash(ctx2, &c, NULL, ctx->n_params, true);
 	if (true) {
@@ -2107,6 +2201,7 @@ int main(int argc, const char *argv[])
 	uint64_t rng_seed = -1ULL;
 	uint64_t post_squash_retry = 0ULL;
 	uint64_t penultimate_retry = 0ULL;
+	int n_processes = 0ULL;
 	int case_insensitive = 0;
 	int quick_early_params = 0;
 	int c_code = 0;
@@ -2145,6 +2240,8 @@ int main(int argc, const char *argv[])
 			   "raw hash to use (one of fnv32, fnv64, djb)"),
 		OPT_BOOLEAN('F', "pre-filter-bits", &pre_filter_bits,
 			   "prune redundant hash bits"),
+		OPT_INTEGER(0, "processes", &n_processes,
+			    "run this many processes (default 1)"),
 		OPT_END(),
 	};
 	static const char *const usages[] = {
@@ -2169,7 +2266,6 @@ int main(int argc, const char *argv[])
 		return 2;
 	}
 
-
 	for (i = 0; i < HASH_LAST; i++) {
 		if (strcmp(hash_function, hash_names[i]) == 0) {
 			hash_id = i;
@@ -2184,8 +2280,16 @@ int main(int argc, const char *argv[])
 	} else {
 		rng_init(&rng, rng_seed);
 	}
+
+	if (n_processes < 1 || n_processes > 200) {
+		printf("Running %d processes is not supported\n",
+		       n_processes);
+		return 3;
+	}
+
 	return find_hash(strings, bits, effort, &rng, db, import_text,
 			 post_squash_retry, penultimate_retry, c_code,
 			 case_insensitive, quick_early_params,
-			 hash_id, pre_filter_bits);
+			 hash_id, pre_filter_bits,
+			 n_processes);
 }
