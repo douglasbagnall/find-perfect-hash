@@ -327,8 +327,8 @@ static int create_subprocesses(struct hashcontext *ctx)
 			ctx->child_pids[i] = pid;
 			continue;
 		}
-		//close(0);
-		//close(1);
+		close(0);
+		close(1);
 		//close(2);
 		ctx->process_number = i;
 		rng_init(ctx->rng, rand64(ctx->rng + i));
