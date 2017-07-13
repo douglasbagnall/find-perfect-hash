@@ -809,7 +809,7 @@ static inline uint64_t next_param(struct hashcontext *ctx,
 
 	if (ctx->n_processes > 1) {
 		uint64_t shared = *ctx->shared_param;
-		if (shared != best) {
+		if (unlikely(shared != best)) {
 			*ctx->shared_param = best;
 			if (shared != 0) {
 				//printf("param mismatch round %lu "
