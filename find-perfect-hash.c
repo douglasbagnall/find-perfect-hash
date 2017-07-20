@@ -1809,6 +1809,7 @@ static void retry(struct hashcontext *ctx,
 			reorder_params(c, j, n_params - 1);
 			continue;
 		}
+		maybe_create_subprocesses(ctx);
 		if (stats.max == 2) {
 			do_last_round(ctx, c, attempts, n_params);
 		} else if (stats.max <= 4 && do_penultimate &&
@@ -1824,6 +1825,8 @@ static void retry(struct hashcontext *ctx,
 					   stats.max,
 					   UINT_MAX);
 		}
+		maybe_shutdown_subprocesses(ctx);
+		
 		if (params[n_params - 1] == victim) {
 			reorder_params(c, j, n_params - 1);
 			printf(COLOUR(C_BLUE,
