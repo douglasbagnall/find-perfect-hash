@@ -337,8 +337,15 @@ static int create_subprocesses(struct hashcontext *ctx)
 	return 0;
 }
 
+static int maybe_create_subprocesses(struct hashcontext *ctx)
+{
+	if (ctx->n_processes > 1) {
+		return create_subprocesses(ctx);
+	}
+	return 0;
+}
 
-static int shut_down_subprocesses(struct hashcontext *ctx)
+static int shutdown_subprocesses(struct hashcontext *ctx)
 {
 	uint i;
 	if (ctx->process_number != 0) {
@@ -355,6 +362,15 @@ static int shut_down_subprocesses(struct hashcontext *ctx)
 	//*ctx->shared_param = 0;
 	return 0;
 }
+
+static int maybe_shutdown_subprocesses(struct hashcontext *ctx)
+{
+	if (ctx->n_processes > 1) {
+		return shutdown_subprocesses(ctx);
+	}
+	return 0;
+}
+
 
 
 static void import_text_parameters(struct hashcontext *ctx, const char *filename)
@@ -1883,13 +1899,10 @@ static void init_multi_rot(struct hashcontext *ctx,
 		attempts = 1000;
 	}
 
-	if (ctx->n_processes > 1) {
-		create_subprocesses(ctx);
-	}
+	maybe_create_subprocesses(ctx);
 	best = do_l2_round(ctx, c, attempts, 0);
-	if (ctx->n_processes > 1) {
-		shut_down_subprocesses(ctx);
-	}
+	maybe_shutdown_subprocesses(ctx);
+
 	if (best == 0) {
 		printf("success in first round!\n");
 		c->collisions = best;
@@ -1928,9 +1941,8 @@ static void init_multi_rot(struct hashcontext *ctx,
 					       stats.past_triples_chance);
 				}
 			}
-			if (ctx->n_processes > 1) {
-				create_subprocesses(ctx);
-			}
+
+			maybe_create_subprocesses(ctx);
 
 			if (stats.max > MAX_SMALL_TUPLE) {
 				best = do_l2_round(ctx, c, attempts, i);
@@ -1941,9 +1953,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 				best = do_squashing_round(ctx, c, attempts, i,
 							  stats.max, UINT_MAX);
 			}
-			if (ctx->n_processes > 1) {
-				shut_down_subprocesses(ctx);
-			}
+			maybe_shutdown_subprocesses(ctx);
 
 			printf("best %u\n", best);
 			if (best == 0) {
@@ -1969,6 +1979,7 @@ static void init_multi_rot(struct hashcontext *ctx,
 			return;
 		}
 		/* special cases for the last two rounds */
+		maybe_create_subprocesses(ctx);
 		if (stats.max == 2) {
 			printf("penultimate hash only pairs! "
 			       "using do_last_round\n");
@@ -1977,13 +1988,17 @@ static void init_multi_rot(struct hashcontext *ctx,
 			do_penultimate_round(ctx, c, n_candidates * 2,
 					     ctx->n_params - 2, UINT_MAX);
 		}
+		maybe_shutdown_subprocesses(ctx);
+
 		if (penultimate_retry) {
 			retry(ctx, c, n_candidates, ctx->n_params - 1,
 			      penultimate_retry, 20, true);
 		}
 	}
 	if (ctx->n_params > 1) {
+		maybe_create_subprocesses(ctx);
 		c->collisions = do_last_round(ctx, c, n_candidates, ctx->n_params);
+		maybe_shutdown_subprocesses(ctx);
 	} else {
 		c->collisions = best;
 	}
