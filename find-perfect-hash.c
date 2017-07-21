@@ -393,22 +393,24 @@ static void import_text_parameters(struct hashcontext *ctx, const char *filename
 }
 
 
-static inline uint32_t hash_component(uint64_t *params, uint i, uint64_t x)
+static inline uint32_t hash_component(uint64_t *params, uint i, uint64_t x,
+				      uint base_bits)
 {
 	uint64_t param = params[i];
 	uint64_t rot = MR_ROT(param);
 	uint64_t mul = MR_MUL(param);
-	uint32_t mask = MR_MASK(i);
+	uint32_t mask = MR_MASK(i, base_bits);
 	return MR_COMPONENT(x, mul, rot, mask);
 }
 
 static inline uint32_t unmasked_hash(uint64_t raw_hash,
-				     uint64_t *params, uint n)
+				     uint64_t *params, uint n,
+				     uint base_bits)
 {
 	uint i;
 	uint32_t hash = 0;
 	for (i = 0; i < n; i++) {
-		uint32_t comp = hash_component(params, i, raw_hash);
+		uint32_t comp = hash_component(params, i, raw_hash, base_bits);
 		hash ^= comp;
 	}
 	return hash;
@@ -416,9 +418,10 @@ static inline uint32_t unmasked_hash(uint64_t raw_hash,
 
 static inline uint32_t running_unmasked_hash(uint64_t raw_hash,
 					     uint32_t running_hash,
-					     uint64_t *params, uint n)
+					     uint64_t *params, uint n,
+					     uint base_bits)
 {
-	uint32_t comp = hash_component(params, n - 1, raw_hash);
+	uint32_t comp = hash_component(params, n - 1, raw_hash, base_bits);
 	return running_hash ^ comp;
 }
 
@@ -430,7 +433,7 @@ static inline void update_running_hash(struct hashcontext *ctx,
 	for (i = 0; i < ctx->n; i++) {
 		ctx->data[i].running_hash = unmasked_hash(
 			ctx->data[i].raw_hash,
-			params, n);
+			params, n, ctx->base_bits);
 	}
 }
 
@@ -463,7 +466,7 @@ static uint64_t remove_unused_param_bits(struct hashcontext *ctx,
 	uint64_t rot = MR_ROT(param);
 	uint i, j;
 	uint64_t original = param;
-	uint32_t mask = MR_MASK(n);
+	uint32_t mask = MR_MASK(n, ctx->base_bits);
 	for (i = 59; i > 1; i--) {
 		uint64_t mul2 = mul & ((1ULL << i) - 1ULL);
 		for (j = 0; j < ctx->n; j++) {
@@ -511,7 +514,7 @@ static uint test_params(struct hashcontext *ctx,
 	uint64_t *hits = (uint64_t *)ctx->hits;
 	for (j = 0; j < ctx->n; j++) {
 		uint32_t hash = unmasked_hash(ctx->data[j].raw_hash,
-					      params, n);
+					      params, n, ctx->base_bits);
 		uint32_t f = hash >> (uint64_t)6;
 		uint64_t g = 1UL << (hash & (uint64_t)63);
 		collisions += (hits[f] & g) ? 1 : 0;
@@ -527,11 +530,11 @@ static uint test_params_l2(struct hashcontext *ctx,
 	int j;
 	uint16_t *hits = ctx->hits;
 	uint64_t c2 = 0;
-	uint n_bits = n + BASE_N - 1;
+	uint n_bits = n + ctx->base_bits - 1;
 	uint16_t worst = 0;
 	for (j = 0; j < ctx->n; j++) {
 		uint32_t hash = unmasked_hash(ctx->data[j].raw_hash,
-					      params, n);
+					      params, n, ctx->base_bits);
 		uint16_t h = hits[hash];
 		c2 += h;
 		h++;
@@ -604,7 +607,7 @@ static uint describe_hash(struct hashcontext *ctx,
 	for (i = 0; i < n_params; i++) {
 		uint64_t x = c->params[i];
 		uint64_t mul = MR_MUL(x);
-		uint mask = MR_MASK(i);
+		uint mask = MR_MASK(i, ctx->base_bits);
 		if (i) {
 			printf("\033[01;34m ^ ");
 		}
@@ -640,7 +643,7 @@ static uint test_params_running(struct hashcontext *ctx,
 	uint64_t param = params[n - 1];
 	uint64_t rot = MR_ROT(param);
 	uint64_t mul = MR_MUL(param);
-	uint32_t mask = MR_MASK(n - 1);
+	uint32_t mask = MR_MASK(n - 1, ctx->base_bits);
 
 	for (j = 0; j < ctx->n; j++) {
 		uint32_t comp = MR_COMPONENT(ctx->data[j].raw_hash,
@@ -668,9 +671,9 @@ static uint64_t test_params_with_l2_running(struct hashcontext *ctx,
 	uint64_t param = params[n - 1];
 	uint64_t rot = MR_ROT(param);
 	uint64_t mul = MR_MUL(param);
-	uint32_t mask = MR_MASK(n - 1);
+	uint32_t mask = MR_MASK(n - 1, ctx->base_bits);
 	uint16_t worst = 0;
-	uint n_bits = n + BASE_N - 1;
+	uint n_bits = n + ctx->base_bits - 1;
 
 	for (j = 0; j < ctx->n; j++) {
 		uint32_t comp = MR_COMPONENT(ctx->data[j].raw_hash,
@@ -694,12 +697,12 @@ static uint64_t test_params_with_l2_running(struct hashcontext *ctx,
 
 static uint64_t calc_best_error(struct hashcontext *ctx, uint n_params)
 {
-	uint n_bits = BASE_N + n_params;
+	uint n_bits = ctx->base_bits + n_params;
 	uint n = 1 << n_bits;
 	uint q = ctx->n / n;
 	uint r = ctx->n % n;
 	uint min_h = q + (r ? 1 : 0);
-	uint mh = 1 << (ctx->bits - n_params - BASE_N);
+	uint mh = 1 << (ctx->bits - n_params - ctx->base_bits);
 	printf("worst scores: max allowable %u; best conceivable %u\n",
 	       mh, min_h);
 	uint64_t sum = q * (n * (q - 1) + 2 * r) / 2;
@@ -934,7 +937,7 @@ static inline uint64_t next_param(struct hashcontext *ctx,
 		}
 	}
 	*used_trick = TRICK_NONE;
-	uint64_t n_bits = n_params + BASE_N - 1;
+	uint64_t n_bits = n_params + ctx->base_bits - 1;
 	/* Some rotates are a bit useless. In particular we want to avoid the
 	   lowest bit landing on the target bit. This of course only matters
 	   with rounds that use rotate.
@@ -955,11 +958,12 @@ static inline uint64_t next_param(struct hashcontext *ctx,
 static inline bool test_pair(uint64_t param,
 			     uint64_t raw_a,
 			     uint64_t raw_b,
-			     uint n)
+			     uint n,
+			     uint base_bits)
 {
 	uint64_t rot = MR_ROT(param);
 	uint64_t mul = MR_MUL(param);
-	uint32_t mask = MR_MASK(n - 1);
+	uint32_t mask = MR_MASK(n - 1, base_bits);
 
 	uint32_t a = MR_COMPONENT(raw_a,
 				  mul, rot, mask);
@@ -971,14 +975,16 @@ static inline bool test_pair(uint64_t param,
 
 static uint test_all_pairs(uint64_t param,
 			   struct tuple_list pairs,
-			   uint n_params)
+			   uint n_params,
+			   uint base_bits)
 {
 	uint i;
 	uint collisions = 0;
 	for (i = 0; i < pairs.n; i++) {
 		collisions += ! test_pair(param,
 					  pairs.raw[i * 2], pairs.raw[i * 2 + 1],
-					  n_params);
+					  n_params,
+					  base_bits);
 	}
 	return collisions;
 }
@@ -998,10 +1004,10 @@ static uint test_all_pairs_all_rot(uint64_t *param,
 				   struct tuple_list pairs,
 				   uint n_params,
 				   uint best_collisions,
-				   uint64_t mask)
+				   uint64_t mask,
+				   uint n_bits)
 {
 	uint i, j;
-	uint n_bits = n_params + BASE_N - 1;
 	uint64_t p = *param & ~MR_ROT_MASK;
 	uint64_t mul = MR_MUL(p);
 	uint8_t ones8[64] __attribute__((__aligned__(ALIGNMENT)));
@@ -1075,7 +1081,7 @@ static struct tuple_stats find_unresolved_small_tuples(struct hashcontext *ctx,
 {
 	uint j;
 	uint32_t hash_mask = (1 << ctx->bits) - 1;
-	uint n_bits = n + BASE_N - 1;
+	uint n_bits = n + ctx->base_bits - 1;
 	uint n_hashes = 1 << n_bits;
 	struct hash_big_tuple *tuples = calloc(n_hashes, sizeof(tuples[0]));
 	uint *size_counts = calloc(MAX_SMALL_TUPLE + 2, sizeof(uint));
@@ -1089,7 +1095,7 @@ static struct tuple_stats find_unresolved_small_tuples(struct hashcontext *ctx,
 
 	for (j = 0; j < ctx->n; j++) {
 		uint64_t raw = ctx->data[j].raw_hash;
-		uint32_t hash = unmasked_hash(raw, params, n);
+		uint32_t hash = unmasked_hash(raw, params, n, ctx->base_bits);
 		hash &= hash_mask;
 		struct hash_big_tuple *p = &tuples[hash];
 		if (p->n < max_size) {
@@ -1261,7 +1267,7 @@ static uint do_squashing_round(struct hashcontext *ctx,
 	uint64_t best_param = 0;
 	uint64_t *params = c->params;
 	struct hash_tuples tuples;
-	uint n_bits = n + BASE_N - 1;
+	uint n_bits = n + ctx->base_bits - 1;
 
 	uint min, mean;
 	max = MIN(max, MAX_SMALL_TUPLE);
@@ -1271,7 +1277,7 @@ static uint do_squashing_round(struct hashcontext *ctx,
 	min = stats.min;
 	max = stats.max;
 	mean = stats.mean;
-	uint32_t mask = MR_MASK(n);
+	uint32_t mask = MR_MASK(n, ctx->base_bits);
 
 	attempts /= 20ul;
 	attempts *= MAX(MIN((uint64_t)stats.mean, 20ul), 10ul);
@@ -1392,8 +1398,9 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 	uint64_t last_improvement_round = 0;
 	uint64_t *params = c->params;
 	struct hash_tuples tuples;
-	uint n_bits = n + BASE_N - 1;
+	uint n_bits = n + ctx->base_bits - 1;
 	uint64_t past_triples = 0;
+
 	struct tuple_stats stats = find_unresolved_small_tuples(ctx, params, n,
 								&tuples, 4, false);
 	if (stats.max > 4) {
@@ -1489,7 +1496,8 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 		struct tuple_list pairs = tuples.tuples[2];
 		if (parallel_pair_search) {
 			collisions = test_all_pairs_all_rot(&p, pairs, n + 1,
-							    best_collisions, nc);
+							    best_collisions, nc,
+							    n_bits);
 			if (collisions < best_collisions) {
 				best_collisions = collisions;
 				best_param = p;
@@ -1510,7 +1518,8 @@ static uint do_penultimate_round(struct hashcontext *ctx,
 					p = param + rotate * MR_ROT_STEP;
 					collisions = test_all_pairs(p,
 								    pairs,
-								    n + 1);
+								    n + 1,
+								    ctx->base_bits);
 					if (collisions < best_collisions) {
 						best_collisions = collisions;
 						best_param = p;
@@ -1568,6 +1577,7 @@ static uint do_last_round(struct hashcontext *ctx,
 	uint64_t last_improvement_round = 0;
 	uint64_t *params = c->params;
 	struct hash_tuples tuples;
+	uint n_bits = n_params + ctx->base_bits - 1;
 	reset_close_params(ctx);
 
 	find_unresolved_small_tuples(ctx, params, n_params - 1,
@@ -1631,7 +1641,8 @@ static uint do_last_round(struct hashcontext *ctx,
 				p &= ~MR_ROT_MASK;
 				for (i = 0; i < 64; i++) {
 					collisions = test_all_pairs(p, pairs,
-								    n_params);
+								    n_params,
+								    ctx->base_bits);
 
 					if (collisions == 0) {
 						best_param = p;
@@ -1663,7 +1674,8 @@ static uint do_last_round(struct hashcontext *ctx,
 			       p, collisions,
 			       &param_trick);
 		collisions = test_all_pairs_all_rot(&p, pairs, n_params,
-						    best_collisions, 0);
+						    best_collisions, 0,
+						    n_bits);
 
 		if (collisions < best_collisions) {
 			best_collisions = collisions;
@@ -1826,7 +1838,7 @@ static void retry(struct hashcontext *ctx,
 					   UINT_MAX);
 		}
 		maybe_shutdown_subprocesses(ctx);
-		
+
 		if (params[n_params - 1] == victim) {
 			reorder_params(c, j, n_params - 1);
 			printf(COLOUR(C_BLUE,
@@ -1918,12 +1930,12 @@ static void init_multi_rot(struct hashcontext *ctx,
 				attempts = 1000;
 			}
 			printf("Beginning round %d (%d bits)\n",
-			       i + 1, i + BASE_N);
+			       i + 1, i + ctx->base_bits);
 
 			stats = get_tuple_stats(ctx, params, i);
 
 			printf("max is %u; min is %u\n", stats.max, stats.min);
-			if (stats.max > 1 << (ctx->bits - i - BASE_N + 1)) {
+			if (stats.max > 1 << (ctx->bits - i - ctx->base_bits + 1)) {
 				printf(COLOUR(C_RED,
 					      "the situation is hopeless\n"));
 			}
@@ -2047,7 +2059,7 @@ static void print_c_code(struct hashcontext *ctx,
 		uint64_t x = c->params[i];
 		uint64_t mul = MR_MUL(x);
 		uint64_t rot = MR_ROT(x);
-		uint mask = MR_MASK(i);
+		uint mask = MR_MASK(i, ctx->base_bits);
 		/* XXX untested */
 		if (rot >= i) {
 			printf("\tr |= ((h * %#17lxULL) >> %2lu) & %#6x;\n",
@@ -2067,6 +2079,7 @@ static struct hashcontext *new_context(const char *filename, uint bits,
 				       struct rng *rng, const char *db_name,
 				       bool case_insensitive,
 				       uint hash_id,
+				       uint base_bits,
 				       bool pre_filter_bits,
 				       uint split_hash_bits,
 				       uint n_processes)
@@ -2078,7 +2091,8 @@ static struct hashcontext *new_context(const char *filename, uint bits,
 	free(strings.strings); /* the (char**), not the (char*) */
 	struct hashcontext *ctx = malloc(sizeof(*ctx));
 
-	ctx->n_params = bits + 1 - BASE_N;
+	ctx->base_bits = base_bits;
+	ctx->n_params = bits + 1 - base_bits;
 	uint16_t *hits = calloc((1 << bits), sizeof(hits[0]));
 
 	ctx->data = data;
@@ -2148,12 +2162,14 @@ static int find_hash(const char *filename, uint bits,
 		     uint hash_id,
 		     bool pre_filter_bits,
 		     uint split_hash_bits,
+		     uint base_bits,
 		     uint n_processes)
 {
 	struct hashcontext *ctx = new_context(filename, bits, rng,
 					      db_filename,
 					      case_insensitive,
 					      hash_id,
+					      base_bits,
 					      pre_filter_bits,
 					      split_hash_bits,
 					      n_processes);
@@ -2195,6 +2211,7 @@ static int find_hash(const char *filename, uint bits,
 	struct hashcontext *ctx2 = new_context(filename, bits, rng,
 					       NULL, case_insensitive,
 					       hash_id,
+					       base_bits,
 					       ctx->pre_filter_mask != ~0ULL,
 					       split_hash_bits,
 					       1);
@@ -2235,7 +2252,7 @@ int main(int argc, const char *argv[])
 	struct rng rng;
 	int pre_filter_bits = 0;
 	int split_hash_bits = 0;
-
+	int base_bits = 3;
 	struct argparse argparse;
 	struct argparse_option options[] = {
 		OPT_HELP(),
@@ -2265,6 +2282,8 @@ int main(int argc, const char *argv[])
 			   "prune redundant hash bits"),
 		OPT_BOOLEAN('S', "split-bits", &split_hash_bits,
 			   "split into this separate using this many bits"),
+		OPT_INTEGER('B', "base-bits", &base_bits,
+			   "solve this many bits in first param (default 3)"),
 		OPT_INTEGER(0, "processes", &n_processes,
 			    "run this many processes (default 1)"),
 		OPT_END(),
@@ -2312,16 +2331,25 @@ int main(int argc, const char *argv[])
 		return 3;
 	}
 
-	if (split_hash_bits < 0 ||
-	    split_hash_bits >= bits - BASE_N) {
-		printf("spltting the hash using %d bits is not possible\n",
-		       split_hash_bits);
+	if (base_bits < 1 ||
+	    base_bits > bits) {
+		printf("bad --base-bits/-B: we can't solve %d bits of %lu\n",
+		       base_bits, bits);
 		return 4;
 	}
+	printf("using %d bits as base\n", base_bits);
+
+	if (split_hash_bits < 0 ||
+	    split_hash_bits >= bits - base_bits) {
+		printf("spltting the hash using %d bits is not possible\n",
+		       split_hash_bits);
+		return 5;
+	}
+
 	return find_hash(strings, bits, effort, &rng, db, import_text,
 			 post_squash_retry, penultimate_retry, c_code,
 			 case_insensitive, quick_early_params,
 			 hash_id, pre_filter_bits,
-			 split_hash_bits,
+			 split_hash_bits, base_bits,
 			 n_processes);
 }

@@ -1,4 +1,3 @@
-#define BASE_N 3
 #define DETERMINISTIC 0
 #define MAX_SMALL_TUPLE 200
 
@@ -37,6 +36,8 @@ struct hashcontext {
 	uint process_number;
 	int *child_pids;
 	uint64_t *shared_param;
+	uint base_bits;
+	uint split_hash_bits;
 };
 
 struct multi_rot {
@@ -75,8 +76,8 @@ struct hash_tuples {
 #define MUL_ROT_TO_PARAM(m, r)(((m) >> 1) | ((r) << 58))
 #endif
 
-#define MR_MASK(i) (((i) == 0) ?					\
-		    (1 << BASE_N) - 1 :					\
-		    (1 << (BASE_N + (i) - 1)))
+#define MR_MASK(i, base_bits) (((i) == 0) ?					\
+		    (1 << base_bits) - 1 :					\
+		    (1 << (base_bits + (i) - 1)))
 
 #define MR_COMPONENT(x, mul, rot, mask)(ROTATE((x * mul), rot) & mask)
