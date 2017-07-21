@@ -30,6 +30,7 @@
 
 
 #define unlikely(x) __builtin_expect(!!(x), 0)
+#define likely(x) __builtin_expect(!(x), 0)
 
 #define COLOUR(c, s) c s C_NORMAL
 
