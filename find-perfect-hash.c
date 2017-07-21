@@ -1582,8 +1582,8 @@ static uint do_last_round(struct hashcontext *ctx,
 	uint param_trick = 0;
 	uint64_t p;
 	if (pairs.n < 64 &&
-	    (1UL << pairs.n) < attempts * 6400UL) {
-		uint64_t exact_attempts = attempts * 500;
+	    (1UL << pairs.n) < attempts * 10000UL) {
+		uint64_t exact_attempts = attempts * 1000UL;
 		uint best_run = 0;
 		printf("trying for exact solution with %'lu attempts (64 way parallel)\n",
 		       exact_attempts);
