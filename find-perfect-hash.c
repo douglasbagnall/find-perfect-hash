@@ -2068,6 +2068,7 @@ static struct hashcontext *new_context(const char *filename, uint bits,
 				       bool case_insensitive,
 				       uint hash_id,
 				       bool pre_filter_bits,
+				       uint split_hash_bits,
 				       uint n_processes)
 {
 	struct strings strings = load_strings(filename);
@@ -2146,6 +2147,7 @@ static int find_hash(const char *filename, uint bits,
 		     uint quick_early_params,
 		     uint hash_id,
 		     bool pre_filter_bits,
+		     uint split_hash_bits,
 		     uint n_processes)
 {
 	struct hashcontext *ctx = new_context(filename, bits, rng,
@@ -2153,6 +2155,7 @@ static int find_hash(const char *filename, uint bits,
 					      case_insensitive,
 					      hash_id,
 					      pre_filter_bits,
+					      split_hash_bits,
 					      n_processes);
 	if (ctx == NULL) {
 		printf("Context creation failed for some reason\n");
@@ -2193,6 +2196,7 @@ static int find_hash(const char *filename, uint bits,
 					       NULL, case_insensitive,
 					       hash_id,
 					       ctx->pre_filter_mask != ~0ULL,
+					       split_hash_bits,
 					       1);
 
 	describe_hash(ctx2, &c, NULL, ctx->n_params, true);
@@ -2230,6 +2234,7 @@ int main(int argc, const char *argv[])
 	const char *strings = NULL;
 	struct rng rng;
 	int pre_filter_bits = 0;
+	int split_hash_bits = 0;
 
 	struct argparse argparse;
 	struct argparse_option options[] = {
@@ -2258,6 +2263,8 @@ int main(int argc, const char *argv[])
 			   "raw hash to use (one of fnv32, fnv64, djb)"),
 		OPT_BOOLEAN('F', "pre-filter-bits", &pre_filter_bits,
 			   "prune redundant hash bits"),
+		OPT_BOOLEAN('S', "split-bits", &split_hash_bits,
+			   "split into this separate using this many bits"),
 		OPT_INTEGER(0, "processes", &n_processes,
 			    "run this many processes (default 1)"),
 		OPT_END(),
@@ -2305,9 +2312,16 @@ int main(int argc, const char *argv[])
 		return 3;
 	}
 
+	if (split_hash_bits < 0 ||
+	    split_hash_bits >= bits - BASE_N) {
+		printf("spltting the hash using %d bits is not possible\n",
+		       split_hash_bits);
+		return 4;
+	}
 	return find_hash(strings, bits, effort, &rng, db, import_text,
 			 post_squash_retry, penultimate_retry, c_code,
 			 case_insensitive, quick_early_params,
 			 hash_id, pre_filter_bits,
+			 split_hash_bits,
 			 n_processes);
 }
