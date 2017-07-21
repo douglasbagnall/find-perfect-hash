@@ -1624,8 +1624,8 @@ static uint do_last_round(struct hashcontext *ctx,
 				}
 				break;
 			}
-			collisions = pairs.n - i;
-			if (i == pairs.n) {
+			best_collisions = pairs.n - i;
+			if (best_collisions == 0) {
 				/* we know there is a rotate that works with
 				   this multiplier */
 				p &= ~MR_ROT_MASK;
