@@ -1605,11 +1605,12 @@ static uint do_last_round(struct hashcontext *ctx,
 		   AND the anti-collisions of pairs.
 		   if there is a one bit, that rotation is good.
 		 */
+		i = 0;
 		for (j = 0; j < exact_attempts; j++) {
 			/* we don't need to calculate the full hash */
 			p = next_param(ctx, j, n_params, best_param,
 				       last_improvement_round,
-				       p, collisions,
+				       p, i,
 				       &param_trick);
 			uint64_t non_collisions = (uint64_t)-1ULL;
 			for (i = 0; i < pairs.n; i++) {
