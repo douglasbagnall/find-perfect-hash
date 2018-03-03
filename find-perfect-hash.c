@@ -2241,7 +2241,7 @@ int main(int argc, const char *argv[])
 	uint64_t rng_seed = -1ULL;
 	uint64_t post_squash_retry = 0ULL;
 	uint64_t penultimate_retry = 0ULL;
-	int n_processes = 0ULL;
+	int n_processes = 1ULL;
 	int case_insensitive = 0;
 	int quick_early_params = 0;
 	int c_code = 0;
