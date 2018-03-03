@@ -2025,12 +2025,14 @@ static void print_c_code(struct hashcontext *ctx,
 			 struct multi_rot *c)
 {
 	int i;
+	uint64_t h_max = UINT32_MAX;
 	printf("/*** *** *** *** ***/\n");
 	printf("uint hash(const char *string)\n");
 	printf("{\n");
 	printf("\tconst char *s;\n");
 	if (ctx->hash_id == HASH_FNV64) {
 		printf("\tuint64_t h = %luUL;\n", FNV64_SEED);
+		h_max = UINT64_MAX;
 	} else if (ctx->hash_id == HASH_DJB) {
 		printf("\tuint32_t h = %u;\n", DJB_SEED);
 	} else {
@@ -2052,7 +2054,7 @@ static void print_c_code(struct hashcontext *ctx,
 		printf("\t\th *= %u;\n", FNV32);
 	}
 	printf("\t}\n");
-	if (ctx->pre_filter_mask != 0) {
+	if (ctx->pre_filter_mask != 0 && ctx->pre_filter_mask < h_max) {
 		printf("\th &= 0x%lx;\n", ctx->pre_filter_mask);
 	}
 
